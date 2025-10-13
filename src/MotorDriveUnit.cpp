@@ -1,6 +1,21 @@
 #include "MotorDriveUnit.h"
 #include "Utils.h"
 
+MotorDriveUnit::MotorDriveUnit(uint8_t forward_left_pin, uint8_t backward_left_pin,
+                               uint8_t forward_right_pin, uint8_t backward_right_pin)
+    : _left_motor(false, false, forward_left_pin, backward_left_pin, Motor::PIN_UNUSED),
+      _right_motor(false, false, forward_right_pin, backward_right_pin, Motor::PIN_UNUSED)
+{
+}
+
+MotorDriveUnit::MotorDriveUnit(uint8_t forward_left_pin, uint8_t backward_left_pin,
+                               uint8_t forward_right_pin, uint8_t backward_right_pin,
+                               uint8_t enable_left_pin, uint8_t enable_right_pin)
+    : _left_motor(false, true, forward_left_pin, backward_left_pin, enable_left_pin),
+      _right_motor(false, true, forward_right_pin, backward_right_pin, enable_right_pin)
+{
+}
+
 MotorDriveUnit::MotorDriveUnit(bool digital_direction, bool digital_enable,
                                uint8_t forward_left_pin, uint8_t backward_left_pin,
                                uint8_t forward_right_pin, uint8_t backward_right_pin,
@@ -32,69 +47,72 @@ void MotorDriveUnit::begin()
   _right_motor.begin();
 }
 
-void MotorDriveUnit::_process_power_and_direction(int16_t (&powers)[2])
+int16_t MotorDriveUnit::_apply_deadzone_to_source(int16_t source_result)
 {
-  int16_t power = _apply_deadzone(utils::clamp(_get_power_source(), -255, 255), _deadzone);
-  int16_t direction = _apply_deadzone(utils::clamp(_get_direction_source(), -255, 255), _deadzone);
+  return _apply_deadzone(utils::clamp(source_result, -255, 255), _deadzone);
+}
 
-  powers[0] = powers[1] = abs(power);
-  bool forward = (power >= 0);
-  uint8_t abs_direction = abs(direction);
-  bool turn_right = (direction >= 0);
+void MotorDriveUnit::applyDifferentialDrive() // FIX THISSSSSSS
+{
+  int16_t power = _apply_deadzone_to_source(_get_power_source());
+  float direction = (float)(_apply_deadzone_to_source(_get_direction_source())) / 255.0f;
+  int16_t powers[2] = {0, 0};
 
-  if (turn_right)
+  if (power == 0 || direction == 0.0f)
   {
-    powers[1] -= abs_direction;
+    powers[0] = powers[1] = power;
+    return;
+  }
+
+  if (direction > 0.0f)
+  {
+    // Turning right
+    powers[0] = power;
+    powers[1] = (int16_t)(power * (1.0f - direction));
   }
   else
   {
-    powers[0] -= abs_direction;
+    // Turning left
+    powers[0] = (int16_t)(power * (1.0f + direction));
+    powers[1] = power;
   }
-
-  if (!forward)
-  {
-    powers[0] = -powers[0];
-    powers[1] = -powers[1];
-  }
-  return;
-}
-
-void MotorDriveUnit::applyDifferentialDrive()
-{
-  int16_t powers[2] = {0, 0};
-  _process_power_and_direction(powers);
 
   _left_motor.setPower(powers[0]);
   _right_motor.setPower(powers[1]);
 }
 
-void MotorDriveUnit::applyTankDrive()
+int16_t invert_power(int16_t power)
 {
-  int16_t direction = utils::clamp(_get_direction_source(), -255, 255);
+  bool positive = power >= 0;
+  int16_t inverted = 255 - abs(power);
+  return inverted * (!positive ? 1 : -1);
+}
+
+void MotorDriveUnit::applyTankDrive() // FIX THISSSSSSS
+{
+  int16_t power = _apply_deadzone_to_source(_get_power_source());
+  float direction = (float)(_apply_deadzone_to_source(_get_direction_source())) / 255.0f;
   int16_t powers[2] = {0, 0};
-  _process_power_and_direction(powers);
 
-  if (direction > 0)
+  if (power == 0 || direction == 0.0f)
   {
-    bool right_is_forward = (powers[1] >= 0);
-    powers[1] = 255 - abs(powers[1]);
-    if (!right_is_forward)
-      powers[1] = -powers[1];
-
-    _left_motor.setPower(powers[0]);
+    powers[0] = powers[1] = power;
+    return;
   }
-  else if (direction < 0)
-  {
-    bool left_is_forward = (powers[0] >= 0);
-    powers[0] = 255 - abs(powers[0]);
-    if (!left_is_forward)
-      powers[0] = -powers[0];
 
-    _right_motor.setPower(powers[1]);
+  if (direction > 0.0f)
+  {
+    // Turning right
+    powers[0] = power;
+    powers[1] = -((int16_t)(power * direction));
   }
   else
   {
-    _left_motor.setPower(powers[0]);
-    _right_motor.setPower(powers[1]);
+    // Turning left
+    powers[0] = -((int16_t)(power * direction));
+    powers[1] = power;
   }
+
+  _left_motor.setPower(powers[0]);
+  _right_motor.setPower(powers[1]);
 }

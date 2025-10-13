@@ -49,7 +49,7 @@ private:
    */
   int16_t _apply_deadzone(int16_t value, uint8_t deadzone);
 
-  void _process_power_and_direction(int16_t (&powers)[2]);
+  int16_t _apply_deadzone_to_source(int16_t source_result);
 
 public:
   /**
@@ -136,7 +136,7 @@ public:
    *
    * @param deadzone Minimum effective input magnitude (0–255).
    */
-  inline void MotorDriveUnit::setDeadzone(uint8_t deadzone)
+  inline void setDeadzone(uint8_t deadzone)
   {
     _deadzone = deadzone;
   }
