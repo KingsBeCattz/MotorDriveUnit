@@ -52,65 +52,80 @@ int16_t MotorDriveUnit::_apply_deadzone_to_source(int16_t source_result)
   return _apply_deadzone(utils::clamp(source_result, -255, 255), _deadzone);
 }
 
-void MotorDriveUnit::applyDifferentialDrive() // FIX THISSSSSSS
+void MotorDriveUnit::setExpositionActive(bool state)
 {
-  int16_t power = _apply_deadzone_to_source(_get_power_source());
-  float direction = (float)(_apply_deadzone_to_source(_get_direction_source())) / 255.0f;
-  int16_t powers[2] = {0, 0};
-
-  if (power == 0 || direction == 0.0f)
+  // Si el estado cambió de presionado a liberado
+  if (_exposition_active_now && !state)
   {
-    powers[0] = powers[1] = power;
+    _exposition_mode = (_exposition_hold_power != 0);
+  }
+
+  // Si el botón está presionado actualmente
+  _exposition_active_now = state;
+}
+
+void MotorDriveUnit::toggleTankDriveMode()
+{
+  _tank_drive_mode = !_tank_drive_mode;
+}
+
+void MotorDriveUnit::update()
+{
+  if (!_initialized || _get_power_source == nullptr || _get_direction_source == nullptr)
+    return;
+
+  int16_t power = _apply_deadzone_to_source(_get_power_source());
+
+  // ──────────────── EXHIBITION MODE ────────────────
+  if (_exposition_active_now)
+  {
+    // Mientras se presiona el botón, se actualiza el hold
+    _exposition_hold_power = power;
+    _exposition_mode = false; // desactiva modo persistente mientras se presiona
+
+    if (power == 0)
+      stop();
+    else
+    {
+      _left_motor.setPower(power);
+      _right_motor.setPower(-power);
+    }
     return;
   }
 
-  if (direction > 0.0f)
+  // Si no se presiona el botón, pero hay un valor guardado ≠ 0 → modo persistente
+  if (_exposition_mode)
   {
-    // Turning right
-    powers[0] = power;
-    powers[1] = (int16_t)(power * (1.0f - direction));
-  }
-  else
-  {
-    // Turning left
-    powers[0] = (int16_t)(power * (1.0f + direction));
-    powers[1] = power;
-  }
-
-  _left_motor.setPower(powers[0]);
-  _right_motor.setPower(powers[1]);
-}
-
-int16_t invert_power(int16_t power)
-{
-  bool positive = power >= 0;
-  int16_t inverted = 255 - abs(power);
-  return inverted * (!positive ? 1 : -1);
-}
-
-void MotorDriveUnit::applyTankDrive() // FIX THISSSSSSS
-{
-  int16_t power = _apply_deadzone_to_source(_get_power_source());
-  float direction = (float)(_apply_deadzone_to_source(_get_direction_source())) / 255.0f;
-  int16_t powers[2] = {0, 0};
-
-  if (power == 0 || direction == 0.0f)
-  {
-    powers[0] = powers[1] = power;
+    if (_exposition_hold_power == 0)
+    {
+      _exposition_mode = false;
+      stop();
+    }
+    else
+    {
+      _left_motor.setPower(_exposition_hold_power);
+      _right_motor.setPower(-_exposition_hold_power);
+    }
     return;
   }
 
+  // ──────────────── NORMAL / TANK DRIVE ────────────────
+  float direction = (float)(_apply_deadzone_to_source(_get_direction_source())) / 255.0f;
+  int16_t powers[2] = {power, power};
+
   if (direction > 0.0f)
   {
-    // Turning right
-    powers[0] = power;
-    powers[1] = -((int16_t)(power * direction));
+    if (_tank_drive_mode)
+      powers[1] = -(int16_t)(powers[1] * direction);
+    else
+      powers[1] = (int16_t)(powers[1] * (1.0f - direction));
   }
-  else
+  else if (direction < 0.0f)
   {
-    // Turning left
-    powers[0] = -((int16_t)(power * direction));
-    powers[1] = power;
+    if (_tank_drive_mode)
+      powers[0] = -(int16_t)(powers[0] * -direction);
+    else
+      powers[0] = (int16_t)(powers[0] * (1.0f + direction));
   }
 
   _left_motor.setPower(powers[0]);
