@@ -1,4 +1,4 @@
-# ESP32 Motor Control Library
+# MotorDriveUnit
 
 A high-level Arduino library for controlling single and dual DC motors using PWM or digital pins, designed for Arduino-compatible boards (ESP32, Arduino Uno, Mega, etc.) for robotics projects such as Robo-Futbol. Includes support for differential and tank drive control, with optional input sources like joysticks or gamepads.
 
