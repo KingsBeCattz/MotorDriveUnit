@@ -36,6 +36,7 @@ private:
   bool _exposition_mode = false;       ///< Indicates whether exposition mode is persistently active.
   bool _exposition_active_now = false; ///< True while the exposition button is currently held.
   bool _tank_drive_mode = false;       ///< When true, Tank Drive mode replaces Differential Drive logic.
+  bool _use_tank_drive = false;        ///< When true, Tank Drive is used temporarily instead of Differential Drive logic.
   int16_t _exposition_hold_power = 0;  ///< Stores the last valid power value during exposition press.
 
   /**
