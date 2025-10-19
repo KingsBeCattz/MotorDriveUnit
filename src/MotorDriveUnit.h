@@ -176,6 +176,21 @@ public:
   void toggleTankDriveMode();
 
   /**
+   * @brief Enables Tank Drive behavior temporarily.
+   *
+   * This function activates the **Tank Drive** logic for one update cycle,
+   * regardless of the current `_tank_drive_mode` configuration.
+   *
+   * @note The effect lasts only until the next `update()` call, where
+   *       `_use_tank_drive` is automatically reset to `false`.
+   *       Useful for performing temporary maneuvers or sharp turns
+   *       without changing the persistent driving mode.
+   */
+  void useTankDrive();
+
+  void useManualDrive(uint8_t left_power, bool left_forward, uint8_t right_power, bool right_forward);
+
+  /**
    * @brief Main update routine controlling the entire drive behavior.
    *
    * This method reads input values from the assigned power and direction sources,
