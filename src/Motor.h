@@ -56,7 +56,7 @@ private:
    */
   inline void _set_enable(uint8_t power)
   {
-    _write_pin(_enable_pin, power, _digital_enable, true);
+    _write_pin(_enable_pin, power, _digital_enable, false);
   }
 
   /**
