@@ -1,17 +1,18 @@
 # MotorDriveUnit
 
-High-level Arduino library for controlling single and dual DC motors using PWM or digital pins, compatible with Arduino-compatible boards (ESP32, Arduino Uno, Mega, etc.). Designed for robotics projects such as Robo-Futbol. Supports differential and tank drive control, with optional input sources like joysticks or gamepads.
+High-level Arduino library for controlling single and dual DC motors using PWM or digital pins, compatible with Arduino-compatible boards (ESP32, Arduino Uno, Mega, etc.). Designed for robotics projects. Supports differential and tank drive control, with optional direct input sources.
 
 ## Features
 
 * High-level control of individual DC motors (`Motor` class).
 * Dual-motor control with differential or tank drive (`MotorDriveUnit` class).
 * Deadzone filtering to prevent unintended small motor movements.
+* Temporary and persistent tank drive modes.
+* Manual motor control for direct power and direction assignment.
 * Exhibition mode (persisted motor power while a button is released).
 * Utility functions for clamping and PWM mapping (`Utils` namespace).
-* Compatible with any gamepad library, as long as input values are mapped to -255 to 255.
 * Works with any Arduino-compatible board (ESP32, Arduino Uno, Mega, etc.).
-* Input convention: values < 0 are interpreted as -x (left) and -y (reverse); values > 0 are +x (right) and +y (forward).
+* Input convention: values < 0 = reverse/left, values > 0 = forward/right.
 
 ## Installation
 
@@ -26,18 +27,43 @@ ESP32MotorControl/
 │  ├─ MotorDriveUnit.cpp
 │  └─ Utils.h
 └─ examples/
-   └─ RoboFutbol.ino
+   ├─ ps2x_four_pwm/ps2x_four_pwm.ino
+   └─ bluepad32_four_pwm/bluepad32_four_pwm.ino
 ```
 
 2. Include the library in your sketch:
 
 ```cpp
-#include <Motor.h>
 #include <MotorDriveUnit.h>
-#include <Utils.h>
 ```
 
-3. Install any gamepad library you wish to use and map the input signals to a range of -255 to 255.
+## MotorDriveUnit Configurations
+
+The `MotorDriveUnit` constructor supports multiple configurations to suit different H-bridge or motor driver setups:
+
+1. **Four PWM inputs (e.g., L298N)**
+
+```cpp
+MotorDriveUnit motor_driver(false, false, forward_left_pin, backward_left_pin, forward_right_pin, backward_right_pin, Motor::PIN_UNUSED, Motor::PIN_UNUSED);
+```
+
+All four inputs are PWM, ideal for standard H-bridge boards.
+
+2. **Digital inputs + PWM enable**
+
+```cpp
+MotorDriveUnit motor_driver(true, false, forward_left_pin, backward_left_pin, forward_right_pin, backward_right_pin, left_enable_pin, right_enable_pin);
+```
+
+All four direction pins are digital, while the enable pins use PWM. This allows controlling speed with only two PWM pins instead of four.
+
+3. **PWM inputs + digital enable**
+
+```cpp
+MotorDriveUnit motor_driver(false, true, forward_left_pin, backward_left_pin, forward_right_pin, backward_right_pin, left_enable_pin, right_enable_pin);
+```
+
+Same as the first configuration, but allows for digital enable, possibly to manually control the activation of bridges h instead of always being active. This can be useful in special cases.
 
 ## Classes and Functions
 
@@ -91,7 +117,10 @@ MotorDriveUnit(bool digital_direction, bool digital_enable,
 * `setDirectionSource(int16_t (*)())` – Function providing direction offset (-255 … 255).
 * `setExpositionActive(bool state)` – Activate exhibition mode (press/release behavior).
 * `toggleTankDriveMode()` – Switch between differential and tank drive behavior.
+* `useTankDrive()` – Temporarily enable tank drive for a single update cycle.
+* `useManualDrive(uint8_t left_power, bool left_forward, uint8_t right_power, bool right_forward)` – Directly control motor powers and directions.
 * `getLeftMotor()` / `getRightMotor()` – Access underlying `Motor` instances.
+* `getPowerSourceFunction()` / `getDirectionSourceFunction()` – Access the current input source callbacks.
 
 ### `Utils` Namespace
 
@@ -104,54 +133,20 @@ int16_t utils::map_for_pwm(int16_t value, int16_t in_min, int16_t in_max);
 
 ## Example Usage
 
-```cpp
-#include <MotorDriveUnit.h>
-#include <Bluepad32.h>
+The library includes ready-to-use examples demonstrating different gamepad integrations:
 
-MotorDriveUnit motor_driver(27, 14, 17, 16);
+1. **PS2X controller with four PWM motor inputs:** `examples/ps2x_four_pwm/ps2x_four_pwm.ino`
+   Demonstrates controlling motors using the classic PS2X controller and full PWM pins.
 
-ControllerPtr current_controller = nullptr;
-
-int16_t power_source() {
-    uint8_t LT = current_controller->l1() ? 255 : current_controller->brake() / 4;
-    uint8_t RT = current_controller->r1() ? 255 : current_controller->throttle() / 4;
-    return RT - LT;
-}
-
-int16_t direction_source() {
-    return current_controller->axisX() / 2;
-}
-
-void setup() {
-    Serial.begin(115200);
-    BP32.setup(&on_connect, &on_disconnect);
-    motor_driver.begin();
-    motor_driver.setDeadzone(75);
-    motor_driver.setPowerSource(power_source);
-    motor_driver.setDirectionSource(direction_source);
-}
-
-void loop() {
-    BP32.update();
-
-    if (current_controller && current_controller->isConnected() && current_controller->isGamepad()) {
-        motor_driver.setExpositionActive(current_controller->y());
-
-        if (current_controller->x())
-            motor_driver.toggleTankDriveMode();
-
-        motor_driver.update();
-    } else {
-        motor_driver.stop();
-    }
-}
-```
+2. **Bluepad32 controller with four PWM motor inputs:** `examples/bluepad32_four_pwm/bluepad32_four_pwm.ino`
+   Shows integration with Bluepad32-supported gamepads for motor control.
 
 ## Notes
 
 * Always call `begin()` before controlling motors.
 * Adjust the deadzone for smoother control and to avoid motor jitter.
-* Use `setExpositionActive()` and `toggleTankDriveMode()` to enable advanced behaviors.
+* Use `setExpositionActive()`, `toggleTankDriveMode()`, and `useTankDrive()` to enable advanced behaviors.
+* `useTankDrive()` only lasts for a single `update()` cycle.
 * Input convention: negative = left/reverse, positive = right/forward.
 * Compatible with ESP32, Arduino Uno, Mega, and any board supporting PWM/digital pins.
 
