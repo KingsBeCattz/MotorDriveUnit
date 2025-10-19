@@ -35,7 +35,7 @@ void Motor::_write_pin(uint8_t pin, uint8_t value, bool digital, bool apply_dead
   {
     bool state = (value > 0);
     if (apply_deadzone)
-      state = (value > _digital_pin_dead_zone);
+      state = (value >= _digital_pin_dead_zone);
 
     digitalWrite(pin, state);
   }
@@ -74,7 +74,7 @@ void Motor::setPower(int16_t power)
   // Clamp the power within safe range
   power = utils::clamp(power, -255, 255);
 
-  bool is_forward = (power > 0);
+  bool is_forward = (power >= 0);
   uint8_t clamped_power = static_cast<uint8_t>(abs(power));
 
   // Skip redundant updates
