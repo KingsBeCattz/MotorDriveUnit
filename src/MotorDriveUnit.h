@@ -250,6 +250,16 @@ public:
   {
     _get_direction_source = source;
   }
+
+  int16_t (*getPowerSourceFunction())()
+  {
+    return _get_power_source;
+  }
+
+  int16_t (*getDirectionSourceFunction())()
+  {
+    return _get_direction_source;
+  }
 };
 
 #endif
