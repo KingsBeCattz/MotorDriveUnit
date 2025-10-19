@@ -137,4 +137,7 @@ void MotorDriveUnit::update()
 
   _left_motor.setPower(powers[0]);
   _right_motor.setPower(powers[1]);
+
+  if (_use_tank_drive)
+    _use_tank_drive = false;
 }
