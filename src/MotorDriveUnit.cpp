@@ -120,16 +120,18 @@ void MotorDriveUnit::update()
   float direction = (float)(_apply_deadzone_to_source(_get_direction_source())) / 255.0f;
   int16_t powers[2] = {power, power};
 
+  bool tank_mode = _use_tank_drive || _tank_drive_mode;
+
   if (direction > 0.0f)
   {
-    if (_tank_drive_mode)
+    if (tank_mode)
       powers[1] = -(int16_t)(powers[1] * direction);
     else
       powers[1] = (int16_t)(powers[1] * (1.0f - direction));
   }
   else if (direction < 0.0f)
   {
-    if (_tank_drive_mode)
+    if (tank_mode)
       powers[0] = -(int16_t)(powers[0] * -direction);
     else
       powers[0] = (int16_t)(powers[0] * (1.0f + direction));
