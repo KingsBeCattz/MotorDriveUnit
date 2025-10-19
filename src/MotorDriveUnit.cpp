@@ -54,13 +54,11 @@ int16_t MotorDriveUnit::_apply_deadzone_to_source(int16_t source_result)
 
 void MotorDriveUnit::setExpositionActive(bool state)
 {
-  // Si el estado cambió de presionado a liberado
   if (_exposition_active_now && !state)
   {
     _exposition_mode = (_exposition_hold_power != 0);
   }
 
-  // Si el botón está presionado actualmente
   _exposition_active_now = state;
 }
 
@@ -79,9 +77,8 @@ void MotorDriveUnit::update()
   // ──────────────── EXHIBITION MODE ────────────────
   if (_exposition_active_now)
   {
-    // Mientras se presiona el botón, se actualiza el hold
     _exposition_hold_power = power;
-    _exposition_mode = false; // desactiva modo persistente mientras se presiona
+    _exposition_mode = false;
 
     if (power == 0)
       stop();
@@ -93,7 +90,6 @@ void MotorDriveUnit::update()
     return;
   }
 
-  // Si no se presiona el botón, pero hay un valor guardado ≠ 0 → modo persistente
   if (_exposition_mode)
   {
     if (_exposition_hold_power == 0)
