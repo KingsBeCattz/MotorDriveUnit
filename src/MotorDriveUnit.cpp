@@ -67,6 +67,17 @@ void MotorDriveUnit::toggleTankDriveMode()
   _tank_drive_mode = !_tank_drive_mode;
 }
 
+void MotorDriveUnit::useTankDrive()
+{
+  _use_tank_drive = true;
+}
+
+void MotorDriveUnit::useManualDrive(uint8_t left_power, bool left_forward, uint8_t right_power, bool right_forward)
+{
+  _left_motor.setPower(left_power * (left_forward ? 1 : -1));
+  _right_motor.setPower(right_power * (right_forward ? 1 : -1));
+}
+
 void MotorDriveUnit::update()
 {
   if (!_initialized || _get_power_source == nullptr || _get_direction_source == nullptr)
