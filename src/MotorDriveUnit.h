@@ -6,150 +6,316 @@
 
 /**
  * @class MotorDriveUnit
- * @brief High-level dual-motor controller supporting multiple drive modes and dynamic input sources.
+ * @brief High-level dual-motor controller designed for skid-steer or differential
+ *        drive robots. Provides configurable deadzone handling, dynamic drive modes,
+ *        exposition (showcase) motion logic, and pluggable input source functions.
  *
- * The `MotorDriveUnit` class orchestrates two `Motor` instances (left and right)
- * to implement flexible control patterns such as **Differential Drive**, **Tank Drive**,
- * and an optional **Exposition Mode** for demonstration purposes.
+ * @details
+ * This class manages two independent Motor instances (left and right), applies
+ * deadzone filtering, merges power and direction sources, and computes the final
+ * wheel outputs each frame via update().
  *
- * It allows runtime assignment of function pointers as dynamic sources for
- * power and direction input, typically used to interface with gamepads, joysticks,
- * or sensors. The `update()` method should be called repeatedly inside the main loop
- * to continuously process inputs and update motor states accordingly.
+ * ## Usage Lifecycle
+ * **Setup phase:**
+ *   1. Instantiate MotorDriveUnit.
+ *   2. Retrieve both Motor instances through getLeftMotor() / getRightMotor().
+ *   3. Configure their pins using:
+ *        - `Motor::setDirectionPins(forward_pin, backward_pin, digital_direction)`
+ *        - `Motor::setEnablePin(enable_pin, digital_enable)`
+ *   4. Optionally set a global driver-enable pin via:
+ *        - `setDriverEnablePin(pin, digital_enable)`
+ *   5. Call `begin()` to initialize both motors.
+ *   6. Configure filtering and input sources:
+ *        - `setDeadzone(deadzone_value)`
+ *        - `setPowerSource(int16_t (*)())`
+ *        - `setDirectionSource(int16_t (*)())`
  *
- * ### Drive Modes:
- * - **Differential Drive:** turns are achieved by proportionally reducing power on one motor.
- * - **Tank Drive:** turns are achieved by inverting the direction of one motor.
- * - **Exposition Mode:** allows continuous spinning for demonstrations when a button is pressed or toggled.
+ * **Loop phase:**
+ *   - Call `update()` to automatically compute outputs based on the source functions.
+ *   - Unless special modes are enabled (tank drive / exposition),
+ *     the motors will follow the power and direction functions.
  *
- * @note Call `begin()` once before any motion commands to properly initialize both motors.
+ * ## Input Ranges
+ * The input source functions must return values within [-255, 255].
+ * Out-of-range values are clamped internally.
+ *
+ * ## Exposition Mode Summary
+ * Exposition features allow the robot to spin in place indefinitely for demos.
+ *
+ * - `_exposition_active_now == true`
+ *      → Immediate mirror-drive motion:
+ *        left = power, right = -power
+ *      → If power == 0, motors stop.
+ *      → The absolute value of power determines speed.
+ *      → The sign determines direction:
+ *          * positive → left forward, right backward
+ *          * negative → left backward, right forward
+ *      → `_exposition_hold_power` stores the last power.
+ *
+ * - When exposition_active_now transitions from true → false:
+ *      * If `_exposition_hold_power != 0`, sustained exposition mode activates.
+ *
+ * - `_exposition_mode == true` (sustained):
+ *      → Uses `_exposition_hold_power` indefinitely.
+ *      → If `_exposition_hold_power == 0`, mode ends and motors stop.
+ *
+ * ## Tank Drive Summary
+ * - Permanent tank mode toggled by `toggleTankDriveMode()`.
+ * - One-shot tank mode triggered by `useTankDrive()` and consumed in the next update().
+ * - In tank drive, direction input causes one wheel to reverse instead of scaling speeds.
+ *
  */
 class MotorDriveUnit
 {
 private:
-  Motor _left_motor;  ///< Internal motor controlling the left side.
-  Motor _right_motor; ///< Internal motor controlling the right side.
+  // ────────────────────────────────────────────────
+  // Motor Configuration
+  // ────────────────────────────────────────────────
 
-  bool _initialized = false; ///< True once both motors have been initialized via `begin()`.
-  uint8_t _deadzone = 0;     ///< Deadzone threshold applied to all analog input sources.
+  /** @brief Left motor instance controlled by this unit. */
+  Motor _left_motor;
 
-  bool _exposition_mode = false;       ///< Indicates whether exposition mode is persistently active.
-  bool _exposition_active_now = false; ///< True while the exposition button is currently held.
-  bool _tank_drive_mode = false;       ///< When true, Tank Drive mode replaces Differential Drive logic.
-  bool _use_tank_drive = false;        ///< When true, Tank Drive is used temporarily instead of Differential Drive logic.
-  int16_t _exposition_hold_power = 0;  ///< Stores the last valid power value during exposition press.
+  /** @brief Right motor instance controlled by this unit. */
+  Motor _right_motor;
+
+  /** @brief Global driver-enable state. HIGH means enabled if digital. */
+  bool _driver_enabled = true;
+
+  /** @brief Output pin used to enable/disable the entire motor driver. */
+  uint8_t _driver_enable_pin = Motor::PIN_UNUSED;
+
+  /** @brief Whether driver enable pin should be controlled digitally (digitalWrite). */
+  bool _digital_driver_enable = true;
+
+  // ────────────────────────────────────────────────
+  // Internal State Variables
+  // ────────────────────────────────────────────────
+
+  /** @brief Marks whether the system was initialized via begin(). */
+  bool _initialized = false;
+
+  /** @brief Deadzone threshold applied to both power and direction inputs. */
+  uint8_t _deadzone = 0;
+
+  /** @brief Permanent exposition sustain mode flag. */
+  bool _exposition_mode = false;
+
+  /** @brief Immediate exposition mode, active only when explicitly enabled. */
+  bool _exposition_active_now = false;
+
+  /** @brief Permanent tank-drive mode toggle. */
+  bool _tank_drive_mode = false;
 
   /**
-   * @brief Callback returning the current power input (-255 to +255).
-   * Used by `update()` to define the base motor power level.
+   * @brief One-shot tank drive flag. Consumed on the next update().
+   * @details
+   * When true, tank drive mode is applied only for the next control cycle,
+   * after which it resets to false automatically.
+   */
+  bool _use_tank_drive = false;
+
+  /**
+   * @brief Last power value used during immediate exposition mode.
+   * @details
+   * If this is non-zero when exposition_active_now is deactivated,
+   * exposition_mode becomes permanently engaged until this value returns to zero.
+   */
+  int16_t _exposition_hold_power = 0;
+
+  /**
+   * @brief Function pointer providing current power input [-255..255].
    */
   int16_t (*_get_power_source)() = nullptr;
 
   /**
-   * @brief Callback returning the current directional input (-255 to +255).
-   * Used by `update()` to determine turning bias between the two motors.
+   * @brief Function pointer providing current direction input [-255..255].
    */
   int16_t (*_get_direction_source)() = nullptr;
 
-  /**
-   * @brief Applies a deadzone filter to the given value.
-   *
-   * Values whose absolute magnitude fall within the deadzone range
-   * are clamped to zero. Remaining values are remapped linearly
-   * to retain full output resolution above the threshold.
-   *
-   * @param value Raw input value to process.
-   * @param deadzone Deadzone threshold (0–255).
-   * @return Processed value within [-255, 255].
-   */
-  int16_t _apply_deadzone(int16_t value, uint8_t deadzone);
+  // ────────────────────────────────────────────────
+  // Private Helpers
+  // ────────────────────────────────────────────────
 
   /**
-   * @brief Applies the current instance deadzone configuration to a given source value.
-   * @param source_result The raw result from the assigned power or direction source.
-   * @return Deadzone-filtered value.
+   * @brief Applies clamping and deadzone filtering to a value.
+   *
+   * @param value Raw input value in range [-255..255].
+   * @param deadzone Threshold under which the value becomes zero.
+   * @return Filtered and remapped output in range [-255..255].
    */
-  int16_t _apply_deadzone_to_source(int16_t source_result);
+  int16_t _apply_deadzone(int16_t value, uint8_t deadzone)
+  {
+    value = utils::clamp(value, -255, 255);
+    if (abs(value) < deadzone)
+      return 0;
+
+    bool positive = (value >= 0);
+    int16_t result = map(abs(value) - deadzone, 0, 255 - deadzone, 0, 255);
+    return positive ? result : -result;
+  }
+
+  /**
+   * @brief Convenience wrapper applying deadzone to a source value.
+   */
+  int16_t _apply_deadzone_to_source(int16_t source_result)
+  {
+    return _apply_deadzone(utils::clamp(source_result, -255, 255), _deadzone);
+  }
 
 public:
-  /**
-   * @brief Constructs a MotorDriveUnit using only directional pins (no enable pins).
-   *
-   * Each motor operates in digital direction mode with no enable control.
-   *
-   * @param forward_left_pin Forward pin for the left motor.
-   * @param backward_left_pin Backward pin for the left motor.
-   * @param forward_right_pin Forward pin for the right motor.
-   * @param backward_right_pin Backward pin for the right motor.
-   */
-  MotorDriveUnit(uint8_t forward_left_pin, uint8_t backward_left_pin,
-                 uint8_t forward_right_pin, uint8_t backward_right_pin);
+  // ────────────────────────────────────────────────
+  // Initialization and Configuration
+  // ────────────────────────────────────────────────
 
   /**
-   * @brief Constructs a MotorDriveUnit using directional and enable pins.
+   * @brief Initializes both internal Motor instances.
    *
-   * This variant supports enable control for both motors and assumes
-   * digital operation for both direction and enable signals.
-   *
-   * @param forward_left_pin Forward pin for the left motor.
-   * @param backward_left_pin Backward pin for the left motor.
-   * @param forward_right_pin Forward pin for the right motor.
-   * @param backward_right_pin Backward pin for the right motor.
-   * @param enable_left_pin Enable pin for the left motor.
-   * @param enable_right_pin Enable pin for the right motor.
+   * @note Must be called during setup(), after motor pins have been configured.
    */
-  MotorDriveUnit(uint8_t forward_left_pin, uint8_t backward_left_pin,
-                 uint8_t forward_right_pin, uint8_t backward_right_pin,
-                 uint8_t enable_left_pin, uint8_t enable_right_pin);
+  void begin()
+  {
+    _left_motor.begin();
+    _right_motor.begin();
+    _initialized = true;
+  }
 
   /**
-   * @brief Constructs a MotorDriveUnit with full control over direction and enable signal modes.
+   * @brief Configures a global driver-enable pin controlling the motor driver hardware.
    *
-   * Allows selecting whether direction and enable pins act as digital or PWM outputs.
-   *
-   * @param digital_direction If true, direction pins behave digitally; if false, they use PWM.
-   * @param digital_enable If true, enable pins behave digitally; if false, they use PWM.
-   * @param forward_left_pin Forward pin for the left motor.
-   * @param backward_left_pin Backward pin for the left motor.
-   * @param forward_right_pin Forward pin for the right motor.
-   * @param backward_right_pin Backward pin for the right motor.
-   * @param enable_left_pin Enable pin for the left motor.
-   * @param enable_right_pin Enable pin for the right motor.
+   * @param enable_pin Digital or analog-controlled output pin.
+   * @param digital_enable Whether this pin is managed using digitalWrite().
    */
-  MotorDriveUnit(bool digital_direction, bool digital_enable,
-                 uint8_t forward_left_pin, uint8_t backward_left_pin,
-                 uint8_t forward_right_pin, uint8_t backward_right_pin,
-                 uint8_t enable_left_pin, uint8_t enable_right_pin);
+  void setDriverEnablePin(uint8_t enable_pin, bool digital_enable = true)
+  {
+    _driver_enable_pin = enable_pin;
+    _digital_driver_enable = digital_enable;
+
+    pinMode(_driver_enable_pin, OUTPUT);
+    digitalWrite(_driver_enable_pin, _driver_enabled ? HIGH : LOW);
+  }
+
+  // ────────────────────────────────────────────────
+  // Accessors
+  // ────────────────────────────────────────────────
 
   /**
-   * @brief Initializes both motor instances.
+   * @brief Get a reference to the left motor.
    *
-   * This method must be called once before any drive operations.
-   * It internally calls `begin()` on both underlying `Motor` objects.
-   * Subsequent calls are safely ignored if initialization was already done.
+   * Returns a non-const reference to the Motor instance representing the left motor
+   * controlled by this MotorDriveUnit. The caller may use the returned reference to
+   * query state or invoke control methods that modify the motor.
+   *
+   * Note: The reference is only valid while the owning MotorDriveUnit object remains
+   * alive — do not store this reference beyond the lifetime of the MotorDriveUnit.
+   *
+   * @return Motor& Reference to the left motor.
    */
-  void begin();
-
-  /**
-   * @brief Retrieves the left motor instance.
-   * @return A copy of the internal left `Motor` object.
-   */
-  Motor getLeftMotor()
+  inline Motor &getLeftMotor()
   {
     return _left_motor;
   }
 
   /**
-   * @brief Retrieves the right motor instance.
-   * @return A copy of the internal right `Motor` object.
+   * @brief Get a reference to the right motor.
+   *
+   * Returns a non-const reference to the Motor instance representing the right motor
+   * controlled by this MotorDriveUnit. The caller may use the returned reference to
+   * query state or invoke control methods that modify the motor.
+   *
+   * Note: The reference is only valid while the owning MotorDriveUnit object remains
+   * alive — do not store this reference beyond the lifetime of the MotorDriveUnit.
+   *
+   * @return Motor& Reference to the right motor.
    */
-  Motor getRightMotor()
+  inline Motor &getRightMotor()
   {
     return _right_motor;
   }
 
+  /** @return Current deadzone threshold. */
+  inline uint8_t getDeadzone() const
+  {
+    return _deadzone;
+  }
+
+  /** @return Pointer to the currently assigned power source function. */
+  int16_t (*getPowerSourceFunction())()
+  {
+    return _get_power_source;
+  }
+
+  /** @return Pointer to the currently assigned direction source function. */
+  int16_t (*getDirectionSourceFunction())()
+  {
+    return _get_direction_source;
+  }
+
+  // ────────────────────────────────────────────────
+  // Mutators
+  // ────────────────────────────────────────────────
+
   /**
-   * @brief Immediately stops both motors by setting output power to zero.
+   * @brief Sets the deadzone value used for input filtering.
+   *
+   * @param deadzone Value in range [0..255].
+   */
+  inline void setDeadzone(uint8_t deadzone)
+  {
+    _deadzone = deadzone;
+  }
+
+  /**
+   * @brief Assigns the power source callback.
+   */
+  inline void setPowerSource(int16_t (*source)())
+  {
+    _get_power_source = source;
+  }
+
+  /**
+   * @brief Assigns the direction source callback.
+   */
+  inline void setDirectionSource(int16_t (*source)())
+  {
+    _get_direction_source = source;
+  }
+
+  // ────────────────────────────────────────────────
+  // Dynamic Control Methods
+  // ────────────────────────────────────────────────
+
+  /**
+   * @brief Toggles the global driver-enable state.
+   *
+   * @details
+   * If a driver-enable pin is configured, it will be updated accordingly.
+   */
+  void toggleDriverEnabled()
+  {
+    _driver_enabled = !_driver_enabled;
+    if (_driver_enable_pin != Motor::PIN_UNUSED)
+    {
+      digitalWrite(_driver_enable_pin, _driver_enabled ? HIGH : LOW);
+    }
+  }
+
+  /**
+   * @brief Sets the global driver-enable state.
+   *
+   * @details
+   * If a driver-enable pin is configured, it will be updated accordingly.
+   */
+  void setDriverEnabled(bool state)
+  {
+    _driver_enabled = state;
+    if (_driver_enable_pin != Motor::PIN_UNUSED)
+    {
+      digitalWrite(_driver_enable_pin, _driver_enabled ? HIGH : LOW);
+    }
+  }
+
+  /**
+   * @brief Immediately stops both motors.
    */
   void stop()
   {
@@ -158,108 +324,157 @@ public:
   }
 
   /**
-   * @brief Activates or releases exposition mode based on button state.
+   * @brief Enables or disables immediate exposition mode.
    *
-   * When active (button pressed), the motors continuously spin opposite directions
-   * to perform an in-place rotation. When released, if the last held power was nonzero,
-   * the unit remains spinning persistently until stopped.
-   *
-   * @param state True while the exposition button is pressed; false when released.
+   * @details
+   * When exposition transitions from active→inactive, and the last hold power
+   * was non-zero, exposition sustain mode activates automatically.
    */
-  void setExpositionActive(bool state);
-
-  /**
-   * @brief Toggles between Differential Drive and Tank Drive behavior.
-   *
-   * - In **Differential Drive**, one motor’s speed is reduced proportionally for turns.
-   * - In **Tank Drive**, one motor reverses direction for sharper rotation.
-   */
-  void toggleTankDriveMode();
-
-  /**
-   * @brief Enables Tank Drive behavior temporarily.
-   *
-   * This function activates the **Tank Drive** logic for one update cycle,
-   * regardless of the current `_tank_drive_mode` configuration.
-   *
-   * @note The effect lasts only until the next `update()` call, where
-   *       `_use_tank_drive` is automatically reset to `false`.
-   *       Useful for performing temporary maneuvers or sharp turns
-   *       without changing the persistent driving mode.
-   */
-  void useTankDrive();
-
-  void useManualDrive(uint8_t left_power, bool left_forward, uint8_t right_power, bool right_forward);
-
-  /**
-   * @brief Main update routine controlling the entire drive behavior.
-   *
-   * This method reads input values from the assigned power and direction sources,
-   * applies deadzone correction, and drives both motors according to the current mode:
-   * - Normal (Differential) Drive
-   * - Tank Drive
-   * - Exposition Mode (live or persistent)
-   *
-   * Should be invoked regularly inside the main control loop.
-   */
-  void update();
-
-  /**
-   * @brief Sets the global deadzone threshold.
-   *
-   * Any absolute input value below this threshold is treated as zero to eliminate
-   * input noise or joystick drift.
-   *
-   * @param deadzone Deadzone magnitude (0–255).
-   */
-  inline void setDeadzone(uint8_t deadzone)
+  void setExpositionActive(bool state)
   {
-    _deadzone = deadzone;
+    if (_exposition_active_now && !state)
+    {
+      _exposition_mode = (_exposition_hold_power != 0);
+    }
+
+    _exposition_active_now = state;
   }
 
   /**
-   * @brief Returns the current deadzone threshold.
-   * @return Current deadzone magnitude.
+   * @brief Toggles permanent tank drive mode.
    */
-  inline uint8_t getDeadzone() const
+  void toggleTankDriveMode()
   {
-    return _deadzone;
+    _tank_drive_mode = !_tank_drive_mode;
   }
 
   /**
-   * @brief Assigns a dynamic function source for motor power input.
-   *
-   * The provided function must return an `int16_t` in the range [-255, 255].
-   * Passing `nullptr` disables the power source.
-   *
-   * @param source Function pointer providing the current power level.
+   * @brief Activates tank drive for the next update() call only.
    */
-  inline void setPowerSource(int16_t (*source)())
+  void useTankDrive()
   {
-    _get_power_source = source;
+    _use_tank_drive = true;
   }
 
   /**
-   * @brief Assigns a dynamic function source for directional control input.
+   * @brief Directly sets power and direction for each motor, bypassing sources.
    *
-   * The provided function must return an `int16_t` in the range [-255, 255].
-   * Passing `nullptr` disables the direction source.
-   *
-   * @param source Function pointer providing the current direction offset.
+   * @param left_power  0–255 magnitude, direction controlled by left_forward.
+   * @param left_forward Motor direction.
+   * @param right_power 0–255 magnitude, direction controlled by right_forward.
+   * @param right_forward Motor direction.
    */
-  inline void setDirectionSource(int16_t (*source)())
+  void useManualDrive(uint8_t left_power, bool left_forward,
+                      uint8_t right_power, bool right_forward)
   {
-    _get_direction_source = source;
+    _left_motor.setPower(left_power * (left_forward ? 1 : -1));
+    _right_motor.setPower(right_power * (right_forward ? 1 : -1));
   }
 
-  int16_t (*getPowerSourceFunction())()
-  {
-    return _get_power_source;
-  }
+  // ────────────────────────────────────────────────
+  // Main Update Loop
+  // ────────────────────────────────────────────────
 
-  int16_t (*getDirectionSourceFunction())()
+  /**
+   * @brief Computes the final motor outputs for this frame.
+   *
+   * @details
+   * This method:
+   *   - Reads and filters power/direction inputs
+   *   - Applies exposition mode logic
+   *   - Applies tank or normal steering logic
+   *   - Sends final output to both motors
+   *
+   * Must be called every loop() cycle to maintain real-time responsiveness.
+   */
+  void update()
   {
-    return _get_direction_source;
+    if (!_initialized || _get_power_source == nullptr || _get_direction_source == nullptr)
+      return;
+
+    int16_t power = _apply_deadzone_to_source(_get_power_source());
+
+    // ──────────────── EXHIBITION MODE (IMMEDIATE) ────────────────
+    if (_exposition_active_now)
+    {
+      _exposition_hold_power = power;
+      _exposition_mode = false;
+
+      if (power == 0)
+      {
+        stop();
+        setDriverEnabled(false);
+      }
+      else
+      {
+        _left_motor.setPower(power);
+        _right_motor.setPower(-power);
+        if (!_driver_enabled)
+        {
+          setDriverEnabled(true);
+        }
+      }
+      return;
+    }
+
+    // ──────────────── EXHIBITION MODE (SUSTAINED) ────────────────
+    if (_exposition_mode)
+    {
+      if (_exposition_hold_power == 0)
+      {
+        _exposition_mode = false;
+        stop();
+        setDriverEnabled(false);
+      }
+      else
+      {
+        _left_motor.setPower(_exposition_hold_power);
+        _right_motor.setPower(-_exposition_hold_power);
+        if (!_driver_enabled)
+        {
+          setDriverEnabled(true);
+        }
+      }
+      return;
+    }
+
+    // ───────────── NORMAL / TANK DRIVE ─────────────
+    if (power == 0)
+    {
+      stop();
+      setDriverEnabled(false);
+      return;
+    }
+    else if (!_driver_enabled)
+    {
+      setDriverEnabled(true);
+    }
+
+    float direction = (float)(_apply_deadzone_to_source(_get_direction_source())) / 255.0f;
+    int16_t powers[2] = {power, power};
+
+    bool tank_mode = _use_tank_drive || _tank_drive_mode;
+
+    if (direction > 0.0f)
+    {
+      if (tank_mode)
+        powers[1] = -(int16_t)(powers[1] * direction);
+      else
+        powers[1] = (int16_t)(powers[1] * (1.0f - direction));
+    }
+    else if (direction < 0.0f)
+    {
+      if (tank_mode)
+        powers[0] = -(int16_t)(powers[0] * -direction);
+      else
+        powers[0] = (int16_t)(powers[0] * (1.0f + direction));
+    }
+
+    _left_motor.setPower(powers[0]);
+    _right_motor.setPower(powers[1]);
+
+    if (_use_tank_drive)
+      _use_tank_drive = false;
   }
 };
 

@@ -2,57 +2,83 @@
 #define Motor_h
 
 #include <Arduino.h>
+#include "Utils.h"
 
 /**
  * @class Motor
- * @brief Provides high-level control for a single DC motor using configurable
- *        forward, backward, and optional enable pins.
+ * @brief Provides a flexible motor control interface supporting 2-pin and 3-pin H-bridge configurations.
  *
- * This class supports both digital and PWM-based control modes, allowing use
- * with H-bridges, motor drivers, or direct GPIO control. The user can specify
- * whether each control line (direction and enable) is digital or PWM-capable.
+ * This class supports both PWM-based and digital-direction motor control. It allows:
+ * - Two-pin mode: (direction/PWM) OR (direction-forward + direction-backward)
+ * - Three-pin mode: dedicated enable pin (digital or PWM), plus forward/backward pins
  *
- * Typical usage involves calling `begin()` once, then using `setPower()`,
- * `forward()`, `backward()`, or `stop()` to control motor behavior.
+ * It fully supports situations where PWM resources are limited by allowing:
+ * - PWM on direction pins and digital enable
+ * - Digital direction pins and PWM on enable
+ *
+ * A dead zone can be configured for digital-mode pins to avoid false HIGH states
+ * when small PWM values are applied.
  */
 class Motor
 {
 private:
-  bool _digital_direction; ///< Defines if the direction pins are digital (true) or PWM (false).
-  bool _digital_enable;    ///< Defines if the enable pin is digital (true) or PWM (false).
-  uint8_t _forward_pin;    ///< Pin controlling the forward direction signal.
-  uint8_t _backward_pin;   ///< Pin controlling the backward direction signal.
-  uint8_t _enable_pin;     ///< Optional enable pin (255 if unused). Used to control motor activation or speed.
+  /** Indicates whether forward/backward pins operate in digital mode. */
+  bool _digital_direction = false;
 
-  uint8_t _digital_pin_dead_zone = 0; ///< Minimum threshold (0–255) to activate output when using digital mode.
+  /** Indicates whether the enable pin (if present) operates in digital mode. */
+  bool _digital_enable = false;
 
-  uint8_t _pwm_value = 0;    ///< Currently applied power value (0–255).
-  bool _forward = true;      ///< Indicates last direction (true = forward, false = backward).
-  bool _initialized = false; ///< True once `begin()` has been called successfully.
+  /** Pin used to drive forward rotation direction or PWM. */
+  uint8_t _forward_pin = PIN_UNUSED;
+
+  /** Pin used to drive backward rotation direction or PWM. */
+  uint8_t _backward_pin = PIN_UNUSED;
+
+  /** Optional enable pin (digital or PWM depending on configuration). */
+  uint8_t _enable_pin = PIN_UNUSED;
+
+  /** Minimum PWM value required to treat a digital pin as HIGH. */
+  uint8_t _digital_pin_dead_zone = 0;
+
+  /** Last PWM value applied to the motor (0–255). */
+  uint8_t _pwm_value = 0;
+
+  /** Indicates current rotation direction (true = forward, false = backward). */
+  bool _forward = true;
+
+  /** Tracks whether the motor has already been initialized via begin(). */
+  bool _initialized = false;
 
   /**
-   * @brief Writes a value to a pin depending on its control mode.
+   * @brief Writes a value to a pin handling PWM or digital logic.
    *
-   * If the pin is configured as digital, the value is interpreted as a boolean
-   * state (HIGH or LOW). When PWM mode is active, the full analog range (0–255)
-   * is written using `analogWrite()`. If `apply_deadzone` is true, a minimum
-   * threshold (`_digital_pin_dead_zone`) is used to prevent low activation noise.
-   *
-   * @param pin Target pin to write.
-   * @param value Output value (0–255).
-   * @param digital True if the pin is digital, false if it is PWM.
-   * @param apply_deadzone True to apply dead zone filtering when using digital output.
+   * @param pin Pin number. If PIN_UNUSED, no action is taken.
+   * @param value PWM value (0–255).
+   * @param digital Whether the pin behaves as a digital pin.
+   * @param apply_deadzone Whether to apply the dead zone check.
    */
-  void _write_pin(uint8_t pin, uint8_t value, bool digital, bool apply_deadzone = false);
+  void _write_pin(uint8_t pin, uint8_t value, bool digital, bool apply_deadzone = false)
+  {
+    if (pin == PIN_UNUSED)
+      return;
+
+    if (digital)
+    {
+      bool state = (value > 0);
+      if (apply_deadzone)
+        state = (value >= _digital_pin_dead_zone);
+
+      digitalWrite(pin, state);
+    }
+    else
+    {
+      analogWrite(pin, value);
+    }
+  }
 
   /**
-   * @brief Updates the enable pin according to the requested power level.
-   *
-   * This method is automatically invoked by `_apply_power()` or by any function
-   * that modifies motor output. It is only executed if the enable pin is defined
-   * (not equal to `PIN_UNUSED`).
-   *
-   * @param power Power value (0–255) to send to the enable pin.
+   * @brief Writes to the enable pin, respecting digital/PWM mode.
+   * @param power PWM/digital value.
    */
   inline void _set_enable(uint8_t power)
   {
@@ -60,60 +86,91 @@ private:
   }
 
   /**
-   * @brief Applies the desired power and direction levels to the motor.
+   * @brief Internal method to apply power distribution to forward/backward pins.
    *
-   * This is the core internal function responsible for actually updating the
-   * hardware pins. It sets the forward and backward outputs according to their
-   * power values and updates the enable pin if present. It also stores the
-   * current `_pwm_value` and `_forward` state internally.
+   * Selects the highest of forward/backward values as the effective power for
+   * the enable pin (if used). This supports H-bridges where enable controls
+   * overall magnitude and direction pins handle sign.
    *
-   * - If `forward_power > backward_power`, the motor spins forward.
-   * - If `backward_power > forward_power`, the motor spins backward.
-   * - If both are zero, the motor is stopped.
-   *
-   * @param forward_power PWM/digital value for the forward direction (0–255).
-   * @param backward_power PWM/digital value for the backward direction (0–255).
+   * @param forward_power PWM value for forward pin.
+   * @param backward_power PWM value for backward pin.
    */
-  void _apply_power(uint8_t forward_power, uint8_t backward_power);
+  void _apply_power(uint8_t forward_power, uint8_t backward_power)
+  {
+    _write_pin(_forward_pin, forward_power, _digital_direction);
+    _write_pin(_backward_pin, backward_power, _digital_direction);
+
+    uint8_t enable_power = (forward_power > backward_power) ? forward_power : backward_power;
+
+    if (_enable_pin != PIN_UNUSED)
+      _set_enable(enable_power);
+
+    _pwm_value = enable_power;
+    _forward = (forward_power >= backward_power);
+  }
 
 public:
-  /**
-   * @brief Constant representing an unused pin.
-   *
-   * If a pin parameter is set to `PIN_UNUSED`, it is ignored by the motor logic.
-   */
+  /** Special marker indicating that a pin is not assigned. */
   static const uint8_t PIN_UNUSED = 255;
 
   /**
-   * @brief Constructs a new Motor instance.
-   *
-   * @param digital_direction If true, both direction pins are digital (HIGH/LOW).
-   *                          If false, PWM output (0–255) is used for both.
-   * @param digital_enable If true, the enable pin is digital; if false, it is PWM.
-   * @param forward_pin Pin used to control forward movement.
-   * @param backward_pin Pin used to control backward movement.
-   * @param enable_pin Optional enable pin (255 if unused). Used in bridges that require
-   *                   a separate activation or power modulation line.
+   * @brief Initializes the pins and internal state. Must be called before use.
    */
-  Motor(bool digital_direction, bool digital_enable, uint8_t forward_pin, uint8_t backward_pin, uint8_t enable_pin = PIN_UNUSED);
+  void begin()
+  {
+    if (_initialized)
+      return;
+
+    _initialized = true;
+
+    if (_forward_pin != PIN_UNUSED)
+      pinMode(_forward_pin, OUTPUT);
+    if (_backward_pin != PIN_UNUSED)
+      pinMode(_backward_pin, OUTPUT);
+
+    if (_enable_pin != PIN_UNUSED)
+    {
+      pinMode(_enable_pin, OUTPUT);
+      _set_enable(0);
+    }
+
+    stop();
+  }
+
+  // -------------------------------
+  // Motor configuration methods
+  // -------------------------------
 
   /**
-   * @brief Initializes the motor's pins and sets them to safe default states.
-   *
-   * This function must be called once before operating the motor.
-   * It sets all control pins as outputs, initializes the enable pin if present,
-   * and ensures the motor starts in a stopped state.
-   *
-   * If `begin()` is called more than once, subsequent calls are ignored to
-   * prevent redundant pin reconfiguration.
+   * @brief Assigns forward/backward pins and configures their mode.
+   * @param forward_pin Pin controlling forward motion.
+   * @param backward_pin Pin controlling backward motion.
+   * @param digital_direction Whether these pins operate as digital rather than PWM.
    */
-  void begin();
+  void setDirectionPins(uint8_t forward_pin, uint8_t backward_pin, bool digital_direction = false)
+  {
+    _forward_pin = forward_pin;
+    _backward_pin = backward_pin;
+    _digital_direction = digital_direction;
+  }
 
   /**
-   * @brief Immediately stops the motor.
-   *
-   * All control pins are set to zero, including the enable pin if defined.
-   * The internal state (`_pwm_value` and `_forward`) is updated accordingly.
+   * @brief Sets the enable pin and whether it operates in digital mode.
+   * @param enable_pin Pin controlling overall power.
+   * @param digital_enable Whether the enable pin is digital.
+   */
+  void setEnablePin(uint8_t enable_pin, bool digital_enable = false)
+  {
+    _enable_pin = enable_pin;
+    _digital_enable = digital_enable;
+  }
+
+  // -------------------------------
+  // Motor control methods
+  // -------------------------------
+
+  /**
+   * @brief Stops the motor immediately.
    */
   inline void stop()
   {
@@ -121,45 +178,70 @@ public:
   }
 
   /**
-   * @brief Sets the motor’s power level and direction.
+   * @brief Sets power and direction using a signed value.
    *
-   * - Positive values move the motor forward.
-   * - Negative values move it backward.
-   * - Zero stops the motor.
-   *
-   * This method automatically determines direction and applies the appropriate
-   * pin outputs through `_apply_power()`. No redundant operations occur if the
-   * power or direction hasn’t changed since the last call.
-   *
-   * @param power Motor power level: -255 (full backward) to +255 (full forward).
+   * @param power Range -255 (full backward) to +255 (full forward).
    */
-  void setPower(int16_t power);
+  void setPower(int16_t power)
+  {
+    if (power == 0)
+    {
+      stop();
+      return;
+    }
+
+    power = utils::clamp(power, -255, 255);
+
+    bool is_forward = (power >= 0);
+    uint8_t clamped_power = static_cast<uint8_t>(abs(power));
+
+    if (is_forward == _forward && clamped_power == _pwm_value)
+      return;
+
+    if (is_forward != _forward)
+    {
+      stop();
+      delayMicroseconds(300);
+    }
+
+    if (is_forward)
+      _apply_power(clamped_power, 0);
+    else
+      _apply_power(0, clamped_power);
+  }
 
   /**
-   * @brief Moves the motor forward at a specified power.
-   *
-   * This is a direct call to `_apply_power()` with the backward channel set to zero.
-   * It also updates internal direction and power tracking.
-   *
-   * @param power Power level (0–255).
+   * @brief Forces forward rotation at a given PWM value.
+   * @param power 0–255
    */
-  void forward(uint8_t power);
+  void forward(uint8_t power)
+  {
+    power = static_cast<uint8_t>(utils::clamp(power, 0, 255));
+    _apply_power(power, 0);
+  }
 
   /**
-   * @brief Moves the motor backward at a specified power.
-   *
-   * This is a direct call to `_apply_power()` with the forward channel set to zero.
-   * It also updates internal direction and power tracking.
-   *
-   * @param power Power level (0–255).
+   * @brief Forces backward rotation at a given PWM value.
+   * @param power 0–255
    */
-  void backward(uint8_t power);
+  void backward(uint8_t power)
+  {
+    power = static_cast<uint8_t>(utils::clamp(power, 0, 255));
+    _apply_power(0, power);
+  }
 
+  /**
+   * @brief Sets the dead zone threshold for pins operating in digital mode.
+   * @param deadzone Minimum PWM value considered HIGH.
+   */
   void setDigitalPinDeadZone(uint8_t deadzone)
   {
     _digital_pin_dead_zone = deadzone;
   }
 
+  /**
+   * @brief Retrieves current dead zone threshold.
+   */
   uint8_t getDigitalPinDeadZone(void)
   {
     return _digital_pin_dead_zone;

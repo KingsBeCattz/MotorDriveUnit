@@ -1,24 +1,22 @@
 #include <Arduino.h>
+#include <HardwareSerial.h>
 #include <MotorDriveUnit.h>
+#include <Motor.h>
 #include <Bluepad32.h>
 
 // -----------------------------------------------------
 // Motor pin definitions
 // -----------------------------------------------------
-/// @brief Pin definition for left forward motion. (IN1)
 #define LEFT_FORWARD_PIN 27
-/// @brief Pin definition for left backward motion. (IN2)
 #define LEFT_BACKWARD_PIN 14
-/// @brief Pin definition for right forward motion. (IN3)
+#define LEFT_ENABLE 32
 #define RIGHT_FORWARD_PIN 17
-/// @brief Pin definition for right backward motion. (IN4)
 #define RIGHT_BACKWARD_PIN 16
+#define RIGHT_ENABLE 23
 
 // -----------------------------------------------------
 // Utility Functions
 // -----------------------------------------------------
-
-/// @brief Computes the ceiling of a float as an unsigned integer.
 unsigned int unsignedCeil(float x)
 {
   unsigned int i = (unsigned int)x;
@@ -28,16 +26,11 @@ unsigned int unsignedCeil(float x)
 // -----------------------------------------------------
 // Controller State
 // -----------------------------------------------------
-
-/// @brief Indicates whether the SELECT button is currently pressed.
 bool SELECT_PRESSED = false;
-/// @brief Indicates whether the START button is currently pressed.
 bool START_PRESSED = false;
 
-/// @brief Timer tracking how long the controller has signaled a system menu request.
 uint16_t controllerDisconnectTimer = 0;
 
-/// @brief Currently connected controller, or nullptr if none.
 ControllerPtr currentController = nullptr;
 
 // -----------------------------------------------------
@@ -196,9 +189,13 @@ void setup()
   motorDriver.begin();
   motorDriver.setDeadzone(70);
 
-  motorDriver.getLeftMotor().setDirectionPins(LEFT_FORWARD_PIN, LEFT_BACKWARD_PIN, false);
+  Motor leftMotor = motorDriver.getLeftMotor();
+  leftMotor.setDirectionPins(LEFT_FORWARD_PIN, LEFT_BACKWARD_PIN, true);
+  leftMotor.setEnablePin(LEFT_ENABLE, false);
 
-  motorDriver.getRightMotor().setDirectionPins(RIGHT_FORWARD_PIN, RIGHT_BACKWARD_PIN, false);
+  Motor rightMotor = motorDriver.getRightMotor();
+  rightMotor.setDirectionPins(RIGHT_FORWARD_PIN, RIGHT_BACKWARD_PIN, true);
+  rightMotor.setEnablePin(RIGHT_ENABLE, false);
 
   motorDriver.setPowerSource(useTriggers);
   motorDriver.setDirectionSource(useLeftXAxis);
@@ -210,11 +207,8 @@ void loop()
 
   if (!currentController)
   {
-    // In case a controller was disconnected but the timer wasn't reset
-    if (controllerDisconnectTimer > 0)
-      controllerDisconnectTimer = 0;
+    controllerDisconnectTimer = 0;
 
-    // Flash LED while waiting for connection and ensure motors are stopped
     motorDriver.stop();
     digitalWrite(2, HIGH);
     delay(100);
@@ -223,7 +217,6 @@ void loop()
     return;
   }
 
-  // Solid LED when connected
   digitalWrite(2, HIGH);
 
   if (currentController->isConnected() && currentController->isGamepad())
@@ -233,7 +226,7 @@ void loop()
     {
       controllerDisconnectTimer += 10;
     }
-    else if (controllerDisconnectTimer > 0)
+    else
     {
       controllerDisconnectTimer = 0;
     }

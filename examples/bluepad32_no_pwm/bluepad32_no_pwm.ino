@@ -196,9 +196,9 @@ void setup()
   motorDriver.begin();
   motorDriver.setDeadzone(70);
 
-  motorDriver.getLeftMotor().setDirectionPins(LEFT_FORWARD_PIN, LEFT_BACKWARD_PIN, false);
+  motorDriver.getLeftMotor().setDirectionPins(LEFT_FORWARD_PIN, LEFT_BACKWARD_PIN, true);
 
-  motorDriver.getRightMotor().setDirectionPins(RIGHT_FORWARD_PIN, RIGHT_BACKWARD_PIN, false);
+  motorDriver.getRightMotor().setDirectionPins(RIGHT_FORWARD_PIN, RIGHT_BACKWARD_PIN, true);
 
   motorDriver.setPowerSource(useTriggers);
   motorDriver.setDirectionSource(useLeftXAxis);
