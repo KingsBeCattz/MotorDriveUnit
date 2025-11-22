@@ -1,55 +1,53 @@
-# 🚀 MotorDriveUnit
-High-level, hardware-agnostic Arduino library for controlling single and dual DC motors.  
-Supports PWM or digital H-bridge control, tank drive, differential drive, exposition mode, deadzones, and fully pluggable input sources.
+# MotorDriveUnit
 
-Designed primarily for mechatronics and robotics projects using boards like ESP32, Arduino Uno, and Mega.
+High-level Arduino library for controlling single and dual DC motors using digital or PWM pins. Designed for robotics projects on ESP32, Arduino Uno, Mega, and similar boards. Version **2.0.0** introduces a modern, flexible, header-only architecture.
 
 ---
 
-# ✨ Features
+# 🚀 What's New in V2.0.0
 
-### 🎮 Input & Control
-- Fully pluggable **power source** and **direction source** callbacks  
-- Compatible with gamepads, joysticks, sensors, or custom logic  
-- Built-in examples for Bluepad32
+The library has been **fully redesigned** for clarity, flexibility, and safer runtime control.
 
-### 🔧 Motor Control
-- Robust `Motor` class for single-motor abstraction
-- Support for **2-pin** and **3-pin** H-bridge configurations
-- Direction pins can be PWM or digital
-- Enable pin can be PWM or digital
-- Automatic safe-reverse braking (short idle period)
+### ✔ Header-only architecture
 
-### 🚗 Drive Modes
-- Differential steering (default)
-- Tank drive (permanent or one-shot)
-- Manual motor override mode
+* `Motor.cpp` and `MotorDriveUnit.cpp` were removed.
+* All logic now resides in `.h` files.
 
-### 🌀 Exposition Mode
-- Immediate spinning behavior (left forward, right backward)
-- Sustained demo mode using last non-zero power
+### ✔ No more constructors
 
-### 🛡 Filtering & Safety
-- Deadzone filtering for jitter-free control
-- Global driver enable pin support
-- Internal clamping and safe power transitions
+Pin configuration is now done **at runtime** using:
+
+* `Motor::setDirectionPins(...)`
+* `Motor::setEnablePin(...)`
+* `MotorDriveUnit::setDriverEnablePin(...)`
+
+### ✔ Safe, consistent motor behavior
+
+* Direction reversal now stops the motor momentarily.
+* Digital dead-zone supported.
+* Unified filtering and clamping.
+
+### ✔ Clear initialization flow
+
+1. Retrieve motors
+2. Assign direction + enable pins
+3. (Optional) Assign global driver enable pin
+4. Call `begin()`
+5. Apply control modes
 
 ---
 
 # 📦 Installation
 
-Place the library folder in your Arduino `libraries/` directory:
+Place the library in your Arduino `libraries` folder with this structure:
 
 ```
-MotorDriveUnit/
-├─ src/
-│  ├─ Motor.h
-│  ├─ Motor.cpp
-│  ├─ MotorDriveUnit.h
-│  ├─ MotorDriveUnit.cpp
-│  └─ Utils.h
-└─ examples/
-   └─ bluepad32_four_pwm/
+MotorDriveUnit
+/
+└─ src/
+   ├─ Motor.h
+   ├─ MotorDriveUnit.h
+   └─ Utils.h
 ```
 
 Include it in your sketch:
@@ -60,163 +58,198 @@ Include it in your sketch:
 
 ---
 
-# 🧩 Library Architecture
+# 🧩 Key Components
 
+## `Motor`
+
+Controls a **single DC motor** using either digital or PWM outputs.
+
+### ✔ Configuration
+
+```cpp
+motor.setDirectionPins(forward_pin, backward_pin, /*digital?*/ true_or_false);
+motor.setEnablePin(enable_pin, /*digital?*/ true_or_false);
 ```
- +------------------------+
- |    MotorDriveUnit      |
- |------------------------|
- | - Input sources        |
- | - Deadzone filtering   |
- | - Tank drive logic     |
- | - Exposition logic     |
- | - Output mixing        |
- +-----------+------------+
-             |
-   +---------+---------+
-   |                   |
-+-------+         +---------+
-| Motor |         |  Motor  |
-+-------+         +---------+
- (Left)             (Right)
+
+### ✔ Methods
+
+* `begin()` — initializes assigned pins.
+* `setPower(int16_t power)` — range: `-255` to `+255`.
+* `forward(uint8_t power)`
+* `backward(uint8_t power)`
+* `stop()`
+* `setDigitalPinDeadZone(uint8_t value)`
+
+### Behavior Notes
+
+* If direction changes from forward → backward, the motor **stops briefly** for safety.
+* In PWM mode, effective power is the **max** of forward/backward values.
+
+---
+
+## `MotorDriveUnit`
+
+Controls **two motors together**, providing high-level drive logic.
+
+### ✔ Configuration Flow
+
+```cpp
+MotorDriveUnit mdu;
+
+auto& left  = mdu.getLeftMotor();
+auto& right = mdu.getRightMotor();
+
+left.setDirectionPins(...);
+left.setEnablePin(...);
+
+right.setDirectionPins(...);
+right.setEnablePin(...);
+
+mdu.setDriverEnablePin(pin, /*digital?*/ true_or_false);
+
+mdu.begin();
+```
+
+### ✔ Features
+
+* Differential drive (global power + direction offset)
+* Tank drive mode (left/right independent inputs)
+* Manual mode for direct control
+* Exhibition Mode
+* Unified dead-zone filtering
+* Global driver enable control
+
+### ✔ Methods
+
+* `begin()`
+* `stop()`
+* `update()`
+* `setDeadzone(uint8_t)`
+* `setPowerSource(int16_t (*)())`
+* `setDirectionSource(int16_t (*)())`
+* `setExpositionActive(bool)`
+* `toggleTankDriveMode()`
+* `useTankDrive()` — one-cycle only
+* `useManualDrive(left_power, left_forward, right_power, right_forward)`
+
+---
+
+# ⚙ Drive Modes
+
+## **1. Differential Drive (default)**
+
+Uses two inputs:
+
+* **Power** (forward/reverse)
+* **Direction** (right/left offset)
+
+MDU computes the resulting left/right motor outputs.
+
+## **2. Tank Drive**
+
+Left and right inputs are independent.
+
+* Activate permanently → `toggleTankDriveMode()`
+* Activate for one update → `useTankDrive()`
+
+## **3. Exhibition Mode**
+
+Allows power to persist while a button is released.
+Activated with:
+
+```cpp
+mdu.setExpositionActive(true);
 ```
 
 ---
 
-# 🛠 Usage Lifecycle
+# 🔌 Global Driver Enable Pin
 
-## 1. Create the controller
+Used to activate/deactivate **both motors at once**.
+
 ```cpp
-MotorDriveUnit drive;
+mdu.setDriverEnablePin(pin, /*digital?*/ true_or_false);
 ```
 
-## 2. Configure motor pins
-```cpp
-drive.getLeftMotor().setDirectionPins(LF_PIN, LB_PIN, false);
-drive.getLeftMotor().setEnablePin(LEFT_EN_PIN, false);
+If digital: HIGH = ON, LOW = OFF.
+If PWM: value is scaled dynamically.
 
-drive.getRightMotor().setDirectionPins(RF_PIN, RB_PIN, false);
-drive.getRightMotor().setEnablePin(RIGHT_EN_PIN, false);
-```
-
-## 3. Optional: set global driver enable pin
-```cpp
-drive.setDriverEnablePin(DRIVER_EN_PIN, true);
-```
-
-## 4. Initialize motors
-```cpp
-drive.begin();
-```
-
-## 5. Configure behavior
-```cpp
-drive.setDeadzone(60);
-drive.setPowerSource(myPowerFunction);
-drive.setDirectionSource(myDirectionFunction);
-```
-
-## 6. In loop()
-```cpp
-drive.update();
-```
+MDU ensures this pin is enabled **before applying power**.
 
 ---
 
-# 🔷 Motor Class
+# 📚 Example (Basic Differential Drive)
 
 ```cpp
-void begin();
-void stop();
-void setPower(int16_t power);
-void forward(uint8_t power);
-void backward(uint8_t power);
-void setDirectionPins(uint8_t forward, uint8_t backward, bool digital);
-void setEnablePin(uint8_t enablePin, bool digital);
-void setDigitalPinDeadZone(uint8_t deadzone);
-```
+#include <MotorDriveUnit.h>
 
----
+MotorDriveUnit mdu;
 
-# 🔷 MotorDriveUnit Class
+int16_t readPower() { return 150; }
+int16_t readDir()   { return -50; }
 
-```cpp
-void begin();
-void update();
-void stop();
-void setDriverEnablePin(uint8_t pin, bool digitalEnable);
-void toggleDriverEnabled();
-void setDeadzone(uint8_t deadzone);
-void setPowerSource(int16_t (*func)());
-void setDirectionSource(int16_t (*func)());
-void toggleTankDriveMode();
-void useTankDrive();
-void setExpositionActive(bool state);
-void useManualDrive(uint8_t lPower, bool lForward,
-                    uint8_t rPower, bool rForward);
+void setup() {
+  auto& L = mdu.getLeftMotor();
+  auto& R = mdu.getRightMotor();
 
-const Motor& getLeftMotor() const;
-const Motor& getRightMotor() const;
+  L.setDirectionPins(18, 19, true);
+  L.setEnablePin(23, false);
 
-int16_t (*getPowerSourceFunction())();
-int16_t (*getDirectionSourceFunction())();
-```
+  R.setDirectionPins(25, 26, true);
+  R.setEnablePin(27, false);
 
----
+  mdu.setDriverEnablePin(5, true);
 
-# 🎮 Input Sources
+  mdu.setPowerSource(readPower);
+  mdu.setDirectionSource(readDir);
 
-Example:
+  mdu.begin();
+}
 
-```cpp
-int16_t readJoystickY() {
-    int16_t raw = analogRead(A0) - 512;
-    return raw / 2;
+void loop() {
+  mdu.update();
 }
 ```
 
-Assign:
+---
+
+# ⚠ Breaking Changes from Previous Versions
+
+* **All constructors removed.**
+* No more digital/PWM flags inside constructors.
+* Pin assignments must now be done through setter methods.
+* `.cpp` files removed.
+* Old initialization examples are incompatible.
+
+To migrate:
+
+1. Instantiate `MotorDriveUnit` with no arguments.
+2. Retrieve motors.
+3. Assign direction and enable pins.
+4. Call `begin()`.
+
+---
+
+# 📝 Utils
+
+Helper functions:
 
 ```cpp
-drive.setPowerSource(readJoystickY);
-drive.setDirectionSource(readJoystickX);
+int16_t utils::clamp(int16_t v, int16_t mn, int16_t mx);
+int16_t utils::map_for_pwm(int16_t value, int16_t in_min, int16_t in_max);
 ```
 
 ---
 
-# 🌀 Exposition Mode
+# 🧷 Notes
 
-| State | Behavior |
-|-------|----------|
-| Active now | Spins immediately (L=power, R=−power) |
-| Disabled with saved power | Enters sustained spinning |
-| Sustained power = 0 | Stops motors and exits |
-
----
-
-# 🚗 Tank Drive
-
-### Permanent:
-```cpp
-drive.toggleTankDriveMode();
-```
-
-### One-shot:
-```cpp
-drive.useTankDrive();
-```
-
----
-
-# 📘 Example
-
-### Bluepad32 Controller  
-```
-examples/bluepad32_four_pwm/
-```
+* Always call `begin()` before use.
+* Digital dead-zone is essential when using digital direction pins.
+* Tank Drive temporary mode applies only to the next `update()` call.
+* Negative values → reverse/left; positive → forward/right.
 
 ---
 
 # 📄 License
 
-MIT License  
+MIT License — free for personal and commercial use.

@@ -163,11 +163,6 @@ private:
   }
 
 public:
-  /**
-   * @brief Constructs a new MotorDriveUnit. Motors must be configured externally.
-   */
-  MotorDriveUnit();
-
   // ────────────────────────────────────────────────
   // Initialization and Configuration
   // ────────────────────────────────────────────────
