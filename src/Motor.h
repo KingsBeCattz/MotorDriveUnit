@@ -152,6 +152,16 @@ public:
     _forward_pin = forward_pin;
     _backward_pin = backward_pin;
     _digital_direction = digital_direction;
+
+    if (_initialized)
+    {
+      if (_forward_pin != PIN_UNUSED)
+        pinMode(_forward_pin, OUTPUT);
+      if (_backward_pin != PIN_UNUSED)
+        pinMode(_backward_pin, OUTPUT);
+
+      stop();
+    }
   }
 
   /**
@@ -163,6 +173,12 @@ public:
   {
     _enable_pin = enable_pin;
     _digital_enable = digital_enable;
+
+    if (_initialized && _enable_pin != PIN_UNUSED)
+    {
+      pinMode(_enable_pin, OUTPUT);
+      _set_enable(0);
+    }
   }
 
   // -------------------------------
