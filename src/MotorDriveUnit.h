@@ -15,6 +15,11 @@
  * deadzone filtering, merges power and direction sources, and computes the final
  * wheel outputs each frame via update().
  *
+ * ## TB6612FNG Standby (STBY) Pin Wiring
+ * Connect the TB6612FNG STBY pin to a digital output pin and pass it to
+ * `setDriverEnablePin(pin)`. The driver wakes (STBY = HIGH) when motors are
+ * in use and enters low-power standby (STBY = LOW) when stopped.
+ *
  * ## Usage Lifecycle
  * **Setup phase:**
  *   1. Instantiate MotorDriveUnit.
@@ -81,10 +86,15 @@ private:
   /** @brief Global driver-enable state. HIGH means enabled if digital. */
   bool _driver_enabled = true;
 
-  /** @brief Output pin used to enable/disable the entire motor driver. */
+  /** @brief Output pin used to enable/disable the entire motor driver (e.g. TB6612FNG STBY). */
   uint8_t _driver_enable_pin = Motor::PIN_UNUSED;
 
-  /** @brief Whether driver enable pin should be controlled digitally (digitalWrite). */
+  /**
+   * @brief Whether driver enable pin should be controlled digitally (digitalWrite).
+   * @details
+   * When true, the pin is driven HIGH (enabled) or LOW (standby) via digitalWrite().
+   * When false, analogWrite() is used: 255 = enabled, 0 = standby.
+   */
   bool _digital_driver_enable = true;
 
   // ────────────────────────────────────────────────
@@ -162,6 +172,29 @@ private:
     return _apply_deadzone(utils::clamp(source_result, -255, 255), _deadzone);
   }
 
+  /**
+   * @brief Low-level write to the driver-enable / STBY pin.
+   *
+   * @details
+   * Respects `_digital_driver_enable`:
+   *   - true  → digitalWrite(HIGH / LOW)
+   *   - false → analogWrite(255 / 0)
+   *
+   * No-ops when `_driver_enable_pin == Motor::PIN_UNUSED`.
+   *
+   * @param state true = enable driver (STBY HIGH), false = standby (STBY LOW).
+   */
+  void _write_driver_enable_pin(bool state)
+  {
+    if (_driver_enable_pin == Motor::PIN_UNUSED)
+      return;
+
+    if (_digital_driver_enable)
+      digitalWrite(_driver_enable_pin, state ? HIGH : LOW);
+    else
+      analogWrite(_driver_enable_pin, state ? 255 : 0);
+  }
+
 public:
   // ────────────────────────────────────────────────
   // Initialization and Configuration
@@ -180,10 +213,16 @@ public:
   }
 
   /**
-   * @brief Configures a global driver-enable pin controlling the motor driver hardware.
+   * @brief Configures the global driver-enable pin (e.g. TB6612FNG STBY).
    *
-   * @param enable_pin Digital or analog-controlled output pin.
-   * @param digital_enable Whether this pin is managed using digitalWrite().
+   * @details
+   * The pin is immediately driven to reflect the current `_driver_enabled` state.
+   * Use `digital_enable = false` for PWM-controlled enable pins; in that case
+   * analogWrite() is used instead of digitalWrite().
+   *
+   * @param enable_pin  Arduino pin number connected to the driver enable/STBY input.
+   * @param digital_enable  true  → manage with digitalWrite() (default, TB6612FNG STBY).
+   *                        false → manage with analogWrite().
    */
   void setDriverEnablePin(uint8_t enable_pin, bool digital_enable = true)
   {
@@ -191,7 +230,7 @@ public:
     _digital_driver_enable = digital_enable;
 
     pinMode(_driver_enable_pin, OUTPUT);
-    digitalWrite(_driver_enable_pin, _driver_enabled ? HIGH : LOW);
+    _write_driver_enable_pin(_driver_enabled); // FIX: use unified helper (respects digital_enable)
   }
 
   // ────────────────────────────────────────────────
@@ -285,33 +324,31 @@ public:
   // ────────────────────────────────────────────────
 
   /**
-   * @brief Toggles the global driver-enable state.
+   * @brief Toggles the global driver-enable / STBY state.
    *
    * @details
-   * If a driver-enable pin is configured, it will be updated accordingly.
+   * If a driver-enable pin is configured, it will be updated accordingly
+   * using the correct write mode (digital or analog).
    */
   void toggleDriverEnabled()
   {
     _driver_enabled = !_driver_enabled;
-    if (_driver_enable_pin != Motor::PIN_UNUSED)
-    {
-      digitalWrite(_driver_enable_pin, _driver_enabled ? HIGH : LOW);
-    }
+    _write_driver_enable_pin(_driver_enabled); // FIX: use unified helper
   }
 
   /**
-   * @brief Sets the global driver-enable state.
+   * @brief Sets the global driver-enable / STBY state.
    *
    * @details
-   * If a driver-enable pin is configured, it will be updated accordingly.
+   * If a driver-enable pin is configured, it will be updated accordingly
+   * using the correct write mode (digital or analog).
+   *
+   * @param state true = driver active (STBY HIGH), false = standby (STBY LOW).
    */
   void setDriverEnabled(bool state)
   {
     _driver_enabled = state;
-    if (_driver_enable_pin != Motor::PIN_UNUSED)
-    {
-      digitalWrite(_driver_enable_pin, _driver_enabled ? HIGH : LOW);
-    }
+    _write_driver_enable_pin(state); // FIX: use unified helper
   }
 
   /**
@@ -329,12 +366,20 @@ public:
    * @details
    * When exposition transitions from active→inactive, and the last hold power
    * was non-zero, exposition sustain mode activates automatically.
+   * The driver-enable pin is asserted before the transition so there is no
+   * frame in which commands are sent while STBY is still LOW.
    */
   void setExpositionActive(bool state)
   {
     if (_exposition_active_now && !state)
     {
       _exposition_mode = (_exposition_hold_power != 0);
+
+      // FIX: pre-assert driver enable so sustained exposition starts with
+      // STBY HIGH — avoids a one-frame gap where motors receive commands
+      // while the driver is still in standby.
+      if (_exposition_mode)
+        setDriverEnabled(true);
     }
 
     _exposition_active_now = state;
@@ -359,14 +404,31 @@ public:
   /**
    * @brief Directly sets power and direction for each motor, bypassing sources.
    *
-   * @param left_power  0–255 magnitude, direction controlled by left_forward.
-   * @param left_forward Motor direction.
-   * @param right_power 0–255 magnitude, direction controlled by right_forward.
-   * @param right_forward Motor direction.
+   * @details
+   * The driver-enable / STBY pin is managed automatically:
+   *   - If both powers are zero, the driver enters standby.
+   *   - Otherwise the driver is woken before the motor commands are issued.
+   *
+   * @param left_power   0–255 magnitude for the left motor.
+   * @param left_forward true = forward, false = backward for the left motor.
+   * @param right_power  0–255 magnitude for the right motor.
+   * @param right_forward true = forward, false = backward for the right motor.
    */
   void useManualDrive(uint8_t left_power, bool left_forward,
                       uint8_t right_power, bool right_forward)
   {
+    // FIX: manage STBY pin just like update() does.
+    bool any_power = (left_power > 0 || right_power > 0);
+    if (!any_power)
+    {
+      stop();
+      setDriverEnabled(false);
+      return;
+    }
+
+    if (!_driver_enabled)
+      setDriverEnabled(true);
+
     _left_motor.setPower(left_power * (left_forward ? 1 : -1));
     _right_motor.setPower(right_power * (right_forward ? 1 : -1));
   }
@@ -407,12 +469,12 @@ public:
       }
       else
       {
+        // FIX: wake driver before sending motor commands (STBY HIGH first).
+        if (!_driver_enabled)
+          setDriverEnabled(true);
+
         _left_motor.setPower(power);
         _right_motor.setPower(-power);
-        if (!_driver_enabled)
-        {
-          setDriverEnabled(true);
-        }
       }
       return;
     }
@@ -428,12 +490,12 @@ public:
       }
       else
       {
+        // FIX: wake driver before sending motor commands.
+        if (!_driver_enabled)
+          setDriverEnabled(true);
+
         _left_motor.setPower(_exposition_hold_power);
         _right_motor.setPower(-_exposition_hold_power);
-        if (!_driver_enabled)
-        {
-          setDriverEnabled(true);
-        }
       }
       return;
     }
@@ -445,10 +507,10 @@ public:
       setDriverEnabled(false);
       return;
     }
-    else if (!_driver_enabled)
-    {
+
+    // FIX: wake driver before sending motor commands.
+    if (!_driver_enabled)
       setDriverEnabled(true);
-    }
 
     float direction = (float)(_apply_deadzone_to_source(_get_direction_source())) / 255.0f;
     int16_t powers[2] = {power, power};
