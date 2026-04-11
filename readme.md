@@ -1,39 +1,37 @@
 # MotorDriveUnit
 
-High-level Arduino library for controlling single and dual DC motors using digital or PWM pins. Designed for robotics projects on ESP32, Arduino Uno, Mega, and similar boards. Version **2.0.0** introduces a modern, flexible, header-only architecture.
+High-level Arduino library for controlling single and dual DC motors using digital or PWM pins. Designed for robotics projects on ESP32, Arduino Uno, Mega, and similar boards. Version **2.1.0** introduces a typed PWM system for safer and more expressive motor control.
 
 ---
 
-# 🚀 What's New in V2.0.0
+# 🚀 What's New in V2.1.0
 
-The library has been **fully redesigned** for clarity, flexibility, and safer runtime control.
+### ✔ Typed PWM system
 
-### ✔ Header-only architecture
+A new `types.h` header introduces semantic type aliases:
 
-* `Motor.cpp` and `MotorDriveUnit.cpp` were removed.
-* All logic now resides in `.h` files.
+* `SignedPWM` — signed value in `[-255, 255]`, encodes both magnitude and direction.
+* `UnsignedPWM` — unsigned value in `[0, 255]`, encodes magnitude only.
+* `Pin` — pin number alias, replaces raw `uint8_t` in all pin parameters.
+* `SourceFn` — function pointer type `SignedPWM (*)()`, used for injectable input sources.
 
-### ✔ No more constructors
+### ✔ Updated method signatures
 
-Pin configuration is now done **at runtime** using:
+All public methods now use the typed aliases instead of raw primitives:
 
-* `Motor::setDirectionPins(...)`
-* `Motor::setEnablePin(...)`
-* `MotorDriveUnit::setDriverEnablePin(...)`
+* `setPowerSource(SourceFn)` replaces `setPowerSource(int16_t (*)())`
+* `setDirectionSource(SourceFn)` replaces `setDirectionSource(int16_t (*)())`
+* `setDeadzone(UnsignedPWM)` replaces `setDeadzone(uint8_t)`
+* `useManualDrive(UnsignedPWM, bool, UnsignedPWM, bool)` replaces `uint8_t` parameters
+* `setPower(SignedPWM)`, `forward(UnsignedPWM)`, `backward(UnsignedPWM)` in `Motor`
 
-### ✔ Safe, consistent motor behavior
+### ✔ Updated utils
 
-* Direction reversal now stops the motor momentarily.
-* Digital dead-zone supported.
-* Unified filtering and clamping.
-
-### ✔ Clear initialization flow
-
-1. Retrieve motors
-2. Assign direction + enable pins
-3. (Optional) Assign global driver enable pin
-4. Call `begin()`
-5. Apply control modes
+```cpp
+utils::clamp(int16_t, int16_t, int16_t);
+utils::signed_pwm_clamp(int16_t);   // clamps to [-255, 255] → SignedPWM
+utils::unsigned_pwm_clamp(int16_t); // clamps to [0, 255]   → UnsignedPWM
+```
 
 ---
 
@@ -42,12 +40,12 @@ Pin configuration is now done **at runtime** using:
 Place the library in your Arduino `libraries` folder with this structure:
 
 ```
-MotorDriveUnit
-/
+MotorDriveUnit/
 └─ src/
+   ├─ types.h
+   ├─ Utils.h
    ├─ Motor.h
-   ├─ MotorDriveUnit.h
-   └─ Utils.h
+   └─ MotorDriveUnit.h
 ```
 
 Include it in your sketch:
@@ -71,14 +69,16 @@ motor.setDirectionPins(forward_pin, backward_pin, /*digital?*/ true_or_false);
 motor.setEnablePin(enable_pin, /*digital?*/ true_or_false);
 ```
 
+> **Note:** Pin modes are configured during `begin()`. Call setters before `begin()`.
+
 ### ✔ Methods
 
 * `begin()` — initializes assigned pins.
-* `setPower(int16_t power)` — range: `-255` to `+255`.
-* `forward(uint8_t power)`
-* `backward(uint8_t power)`
+* `setPower(SignedPWM power)` — range: `-255` to `+255`.
+* `forward(UnsignedPWM power)`
+* `backward(UnsignedPWM power)`
 * `stop()`
-* `setDigitalPinDeadZone(uint8_t value)`
+* `setDigitalPinDeadZone(UnsignedPWM value)`
 
 ### Behavior Notes
 
@@ -115,7 +115,7 @@ mdu.begin();
 * Differential drive (global power + direction offset)
 * Tank drive mode (left/right independent inputs)
 * Manual mode for direct control
-* Exhibition Mode
+* Exhibition mode
 * Unified dead-zone filtering
 * Global driver enable control
 
@@ -124,13 +124,13 @@ mdu.begin();
 * `begin()`
 * `stop()`
 * `update()`
-* `setDeadzone(uint8_t)`
-* `setPowerSource(int16_t (*)())`
-* `setDirectionSource(int16_t (*)())`
+* `setDeadzone(UnsignedPWM)`
+* `setPowerSource(SourceFn)`
+* `setDirectionSource(SourceFn)`
 * `setExpositionActive(bool)`
 * `toggleTankDriveMode()`
 * `useTankDrive()` — one-cycle only
-* `useManualDrive(left_power, left_forward, right_power, right_forward)`
+* `useManualDrive(UnsignedPWM, bool, UnsignedPWM, bool)`
 
 ---
 
@@ -140,10 +140,10 @@ mdu.begin();
 
 Uses two inputs:
 
-* **Power** (forward/reverse)
-* **Direction** (right/left offset)
+* **Power** — forward/reverse magnitude and direction (`SignedPWM`)
+* **Direction** — left/right offset (`SignedPWM`)
 
-MDU computes the resulting left/right motor outputs.
+MDU computes the resulting left/right motor outputs each `update()`.
 
 ## **2. Tank Drive**
 
@@ -154,27 +154,27 @@ Left and right inputs are independent.
 
 ## **3. Exhibition Mode**
 
-Allows power to persist while a button is released.
-Activated with:
+Spins the robot in place. When deactivated, the last non-zero power is held indefinitely until it returns to zero.
 
 ```cpp
-mdu.setExpositionActive(true);
+mdu.setExpositionActive(true);  // start
+mdu.setExpositionActive(false); // release — sustained spin if power was non-zero
 ```
 
 ---
 
 # 🔌 Global Driver Enable Pin
 
-Used to activate/deactivate **both motors at once**.
+Used to activate/deactivate **both motors at once** (e.g. TB6612FNG STBY pin).
 
 ```cpp
 mdu.setDriverEnablePin(pin, /*digital?*/ true_or_false);
 ```
 
-If digital: HIGH = ON, LOW = OFF.
-If PWM: value is scaled dynamically.
+* Digital: `HIGH` = enabled, `LOW` = standby.
+* PWM: `255` = enabled, `0` = standby.
 
-MDU ensures this pin is enabled **before applying power**.
+MDU ensures this pin is asserted **before** sending any motor commands.
 
 ---
 
@@ -185,8 +185,8 @@ MDU ensures this pin is enabled **before applying power**.
 
 MotorDriveUnit mdu;
 
-int16_t readPower() { return 150; }
-int16_t readDir()   { return -50; }
+SignedPWM readPower() { return 150; }
+SignedPWM readDir()   { return -50; }
 
 void setup() {
   auto& L = mdu.getLeftMotor();
@@ -213,40 +213,32 @@ void loop() {
 
 ---
 
-# ⚠ Breaking Changes from Previous Versions
+# ⚠ Breaking Changes
 
-* **All constructors removed.**
-* No more digital/PWM flags inside constructors.
-* Pin assignments must now be done through setter methods.
-* `.cpp` files removed.
-* Old initialization examples are incompatible.
+## From 2.0.0 → 2.1.0
 
-To migrate:
+* `setPowerSource` and `setDirectionSource` now require a `SourceFn` (`SignedPWM (*)()`) instead of `int16_t (*)()`.
+* `setDeadzone`, `setDigitalPinDeadZone` now take `UnsignedPWM` instead of `uint8_t`.
+* `useManualDrive` now takes `UnsignedPWM` instead of `uint8_t` for power parameters.
+* `setPower` now takes `SignedPWM` instead of `int16_t`.
+* `forward` and `backward` now take `UnsignedPWM` instead of `uint8_t`.
+* Pin parameters across all methods now use `Pin` instead of `uint8_t`.
+* `utils::map_for_pwm` removed. Use `utils::signed_pwm_clamp` or `utils::unsigned_pwm_clamp`.
 
-1. Instantiate `MotorDriveUnit` with no arguments.
-2. Retrieve motors.
-3. Assign direction and enable pins.
-4. Call `begin()`.
+## From pre-2.0.0
 
----
-
-# 📝 Utils
-
-Helper functions:
-
-```cpp
-int16_t utils::clamp(int16_t v, int16_t mn, int16_t mx);
-int16_t utils::map_for_pwm(int16_t value, int16_t in_min, int16_t in_max);
-```
+* All constructors removed.
+* `.cpp` files removed — library is now header-only.
+* Pin assignments must be done through setter methods before `begin()`.
 
 ---
 
 # 🧷 Notes
 
-* Always call `begin()` before use.
+* Always call `begin()` after configuring pins and before `update()`.
 * Digital dead-zone is essential when using digital direction pins.
 * Tank Drive temporary mode applies only to the next `update()` call.
-* Negative values → reverse/left; positive → forward/right.
+* Negative `SignedPWM` values → reverse/left; positive → forward/right.
 
 ---
 

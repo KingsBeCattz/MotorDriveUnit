@@ -1,8 +1,8 @@
-#ifndef MotorDriveUnit_h
-#define MotorDriveUnit_h
+#pragma once
 
 #include <Arduino.h>
 #include "Motor.h"
+#include "types.h"
 
 /**
  * @class MotorDriveUnit
@@ -14,6 +14,11 @@
  * This class manages two independent Motor instances (left and right), applies
  * deadzone filtering, merges power and direction sources, and computes the final
  * wheel outputs each frame via update().
+ *
+ * ## TB6612FNG Standby (STBY) Pin Wiring
+ * Connect the TB6612FNG STBY pin to a digital output pin and pass it to
+ * `setDriverEnablePin(pin)`. The driver wakes (STBY = HIGH) when motors are
+ * in use and enters low-power standby (STBY = LOW) when stopped.
  *
  * ## Usage Lifecycle
  * **Setup phase:**
@@ -27,8 +32,8 @@
  *   5. Call `begin()` to initialize both motors.
  *   6. Configure filtering and input sources:
  *        - `setDeadzone(deadzone_value)`
- *        - `setPowerSource(int16_t (*)())`
- *        - `setDirectionSource(int16_t (*)())`
+ *        - `setPowerSource(SourceFn)`
+ *        - `setDirectionSource(SourceFn)`
  *
  * **Loop phase:**
  *   - Call `update()` to automatically compute outputs based on the source functions.
@@ -81,10 +86,15 @@ private:
   /** @brief Global driver-enable state. HIGH means enabled if digital. */
   bool _driver_enabled = true;
 
-  /** @brief Output pin used to enable/disable the entire motor driver. */
-  uint8_t _driver_enable_pin = Motor::PIN_UNUSED;
+  /** @brief Output pin used to enable/disable the entire motor driver (e.g. TB6612FNG STBY). */
+  Pin _driver_enable_pin = Motor::PIN_UNUSED;
 
-  /** @brief Whether driver enable pin should be controlled digitally (digitalWrite). */
+  /**
+   * @brief Whether driver enable pin should be controlled digitally (digitalWrite).
+   * @details
+   * When true, the pin is driven HIGH (enabled) or LOW (standby) via digitalWrite().
+   * When false, analogWrite() is used: 255 = enabled, 0 = standby.
+   */
   bool _digital_driver_enable = true;
 
   // ────────────────────────────────────────────────
@@ -95,7 +105,7 @@ private:
   bool _initialized = false;
 
   /** @brief Deadzone threshold applied to both power and direction inputs. */
-  uint8_t _deadzone = 0;
+  UnsignedPWM _deadzone = 0;
 
   /** @brief Permanent exposition sustain mode flag. */
   bool _exposition_mode = false;
@@ -120,17 +130,17 @@ private:
    * If this is non-zero when exposition_active_now is deactivated,
    * exposition_mode becomes permanently engaged until this value returns to zero.
    */
-  int16_t _exposition_hold_power = 0;
+  SignedPWM _exposition_hold_power = 0;
 
   /**
-   * @brief Function pointer providing current power input [-255..255].
+   * @brief Function pointer providing current power input as a SignedPWM [-255..255].
    */
-  int16_t (*_get_power_source)() = nullptr;
+  SourceFn _get_power_source = nullptr;
 
   /**
-   * @brief Function pointer providing current direction input [-255..255].
+   * @brief Function pointer providing current direction input as a SignedPWM [-255..255].
    */
-  int16_t (*_get_direction_source)() = nullptr;
+  SourceFn _get_direction_source = nullptr;
 
   // ────────────────────────────────────────────────
   // Private Helpers
@@ -143,23 +153,46 @@ private:
    * @param deadzone Threshold under which the value becomes zero.
    * @return Filtered and remapped output in range [-255..255].
    */
-  int16_t _apply_deadzone(int16_t value, uint8_t deadzone)
+  int16_t _apply_deadzone(int16_t value, UnsignedPWM deadzone)
   {
-    value = utils::clamp(value, -255, 255);
+    value = utils::signed_pwm_clamp(value);
     if (abs(value) < deadzone)
       return 0;
-
     bool positive = (value >= 0);
     int16_t result = map(abs(value) - deadzone, 0, 255 - deadzone, 0, 255);
+    result = utils::signed_pwm_clamp(result);
     return positive ? result : -result;
   }
 
   /**
    * @brief Convenience wrapper applying deadzone to a source value.
    */
-  int16_t _apply_deadzone_to_source(int16_t source_result)
+  SignedPWM _apply_deadzone_to_source(SignedPWM source_result)
   {
-    return _apply_deadzone(utils::clamp(source_result, -255, 255), _deadzone);
+    return _apply_deadzone(utils::signed_pwm_clamp(source_result), _deadzone);
+  }
+
+  /**
+   * @brief Low-level write to the driver-enable / STBY pin.
+   *
+   * @details
+   * Respects `_digital_driver_enable`:
+   *   - true  → digitalWrite(HIGH / LOW)
+   *   - false → analogWrite(255 / 0)
+   *
+   * No-ops when `_driver_enable_pin == Motor::PIN_UNUSED`.
+   *
+   * @param state true = enable driver (STBY HIGH), false = standby (STBY LOW).
+   */
+  void _write_driver_enable_pin(bool state)
+  {
+    if (_driver_enable_pin == Motor::PIN_UNUSED)
+      return;
+
+    if (_digital_driver_enable)
+      digitalWrite(_driver_enable_pin, state ? HIGH : LOW);
+    else
+      analogWrite(_driver_enable_pin, state ? 255 : 0);
   }
 
 public:
@@ -180,18 +213,24 @@ public:
   }
 
   /**
-   * @brief Configures a global driver-enable pin controlling the motor driver hardware.
+   * @brief Configures the global driver-enable pin (e.g. TB6612FNG STBY).
    *
-   * @param enable_pin Digital or analog-controlled output pin.
-   * @param digital_enable Whether this pin is managed using digitalWrite().
+   * @details
+   * The pin is immediately driven to reflect the current `_driver_enabled` state.
+   * Use `digital_enable = false` for PWM-controlled enable pins; in that case
+   * analogWrite() is used instead of digitalWrite().
+   *
+   * @param enable_pin  Arduino pin number connected to the driver enable/STBY input.
+   * @param digital_enable  true  → manage with digitalWrite() (default, TB6612FNG STBY).
+   *                        false → manage with analogWrite().
    */
-  void setDriverEnablePin(uint8_t enable_pin, bool digital_enable = true)
+  void setDriverEnablePin(Pin enable_pin, bool digital_enable = true)
   {
     _driver_enable_pin = enable_pin;
     _digital_driver_enable = digital_enable;
 
     pinMode(_driver_enable_pin, OUTPUT);
-    digitalWrite(_driver_enable_pin, _driver_enabled ? HIGH : LOW);
+    _write_driver_enable_pin(_driver_enabled);
   }
 
   // ────────────────────────────────────────────────
@@ -199,56 +238,36 @@ public:
   // ────────────────────────────────────────────────
 
   /**
-   * @brief Get a reference to the left motor.
+   * @brief Returns a non-const reference to the left motor.
    *
-   * Returns a non-const reference to the Motor instance representing the left motor
-   * controlled by this MotorDriveUnit. The caller may use the returned reference to
-   * query state or invoke control methods that modify the motor.
-   *
-   * Note: The reference is only valid while the owning MotorDriveUnit object remains
-   * alive — do not store this reference beyond the lifetime of the MotorDriveUnit.
+   * The reference is only valid while the owning MotorDriveUnit remains alive —
+   * do not store it beyond the lifetime of this object.
    *
    * @return Motor& Reference to the left motor.
    */
-  inline Motor &getLeftMotor()
-  {
-    return _left_motor;
-  }
+  inline Motor &getLeftMotor() { return _left_motor; }
 
   /**
-   * @brief Get a reference to the right motor.
+   * @brief Returns a non-const reference to the right motor.
    *
-   * Returns a non-const reference to the Motor instance representing the right motor
-   * controlled by this MotorDriveUnit. The caller may use the returned reference to
-   * query state or invoke control methods that modify the motor.
-   *
-   * Note: The reference is only valid while the owning MotorDriveUnit object remains
-   * alive — do not store this reference beyond the lifetime of the MotorDriveUnit.
+   * The reference is only valid while the owning MotorDriveUnit remains alive —
+   * do not store it beyond the lifetime of this object.
    *
    * @return Motor& Reference to the right motor.
    */
-  inline Motor &getRightMotor()
-  {
-    return _right_motor;
-  }
+  inline Motor &getRightMotor() { return _right_motor; }
 
   /** @return Current deadzone threshold. */
-  inline uint8_t getDeadzone() const
+  inline UnsignedPWM getDeadzone() const
   {
     return _deadzone;
   }
 
-  /** @return Pointer to the currently assigned power source function. */
-  int16_t (*getPowerSourceFunction())()
-  {
-    return _get_power_source;
-  }
+  /** @return The currently assigned power source function, or nullptr if none. */
+  SourceFn getPowerSourceFunction() { return _get_power_source; }
 
-  /** @return Pointer to the currently assigned direction source function. */
-  int16_t (*getDirectionSourceFunction())()
-  {
-    return _get_direction_source;
-  }
+  /** @return The currently assigned direction source function, or nullptr if none. */
+  SourceFn getDirectionSourceFunction() { return _get_direction_source; }
 
   // ────────────────────────────────────────────────
   // Mutators
@@ -259,59 +278,57 @@ public:
    *
    * @param deadzone Value in range [0..255].
    */
-  inline void setDeadzone(uint8_t deadzone)
+  inline void setDeadzone(UnsignedPWM deadzone)
   {
     _deadzone = deadzone;
   }
 
   /**
    * @brief Assigns the power source callback.
+   *
+   * @param source A SourceFn to be called each cycle to obtain the current power value.
+   *               Pass nullptr to disable power input.
    */
-  inline void setPowerSource(int16_t (*source)())
-  {
-    _get_power_source = source;
-  }
+  inline void setPowerSource(SourceFn source) { _get_power_source = source; }
 
   /**
    * @brief Assigns the direction source callback.
+   *
+   * @param source A SourceFn to be called each cycle to obtain the current direction value.
+   *               Pass nullptr to disable direction input.
    */
-  inline void setDirectionSource(int16_t (*source)())
-  {
-    _get_direction_source = source;
-  }
+  inline void setDirectionSource(SourceFn source) { _get_direction_source = source; }
 
   // ────────────────────────────────────────────────
   // Dynamic Control Methods
   // ────────────────────────────────────────────────
 
   /**
-   * @brief Toggles the global driver-enable state.
+   * @brief Toggles the global driver-enable / STBY state.
    *
    * @details
-   * If a driver-enable pin is configured, it will be updated accordingly.
+   * If a driver-enable pin is configured, it will be updated accordingly
+   * using the correct write mode (digital or analog).
    */
   void toggleDriverEnabled()
   {
     _driver_enabled = !_driver_enabled;
-    if (_driver_enable_pin != Motor::PIN_UNUSED)
-    {
-      digitalWrite(_driver_enable_pin, _driver_enabled ? HIGH : LOW);
-    }
+    _write_driver_enable_pin(_driver_enabled);
   }
 
   /**
-   * @brief Sets the global driver-enable state.
+   * @brief Sets the global driver-enable / STBY state.
    *
    * @details
-   * If a driver-enable pin is configured, it will be updated accordingly.
+   * If a driver-enable pin is configured, it will be updated accordingly
+   * using the correct write mode (digital or analog).
+   *
+   * @param state true = driver active (STBY HIGH), false = standby (STBY LOW).
    */
   void setDriverEnabled(bool state)
   {
     _driver_enabled = state;
-    if (_driver_enable_pin != Motor::PIN_UNUSED)
-    {
-      digitalWrite(_driver_enable_pin, _driver_enabled ? HIGH : LOW);
-    }
+    _write_driver_enable_pin(state);
   }
 
   /**
@@ -329,12 +346,17 @@ public:
    * @details
    * When exposition transitions from active→inactive, and the last hold power
    * was non-zero, exposition sustain mode activates automatically.
+   * The driver-enable pin is asserted before the transition so there is no
+   * frame in which commands are sent while STBY is still LOW.
    */
   void setExpositionActive(bool state)
   {
     if (_exposition_active_now && !state)
     {
       _exposition_mode = (_exposition_hold_power != 0);
+
+      if (_exposition_mode)
+        setDriverEnabled(true);
     }
 
     _exposition_active_now = state;
@@ -359,16 +381,32 @@ public:
   /**
    * @brief Directly sets power and direction for each motor, bypassing sources.
    *
-   * @param left_power  0–255 magnitude, direction controlled by left_forward.
-   * @param left_forward Motor direction.
-   * @param right_power 0–255 magnitude, direction controlled by right_forward.
-   * @param right_forward Motor direction.
+   * @details
+   * The driver-enable / STBY pin is managed automatically:
+   *   - If both powers are zero, the driver enters standby.
+   *   - Otherwise the driver is woken before the motor commands are issued.
+   *
+   * @param left_power   0–255 magnitude for the left motor.
+   * @param left_forward true = forward, false = backward for the left motor.
+   * @param right_power  0–255 magnitude for the right motor.
+   * @param right_forward true = forward, false = backward for the right motor.
    */
-  void useManualDrive(uint8_t left_power, bool left_forward,
-                      uint8_t right_power, bool right_forward)
+  void useManualDrive(UnsignedPWM left_power, bool left_forward,
+                      UnsignedPWM right_power, bool right_forward)
   {
-    _left_motor.setPower(left_power * (left_forward ? 1 : -1));
-    _right_motor.setPower(right_power * (right_forward ? 1 : -1));
+    bool any_power = (left_power > 0 || right_power > 0);
+    if (!any_power)
+    {
+      stop();
+      setDriverEnabled(false);
+      return;
+    }
+
+    if (!_driver_enabled)
+      setDriverEnabled(true);
+
+    _left_motor.setPower(static_cast<int16_t>(left_power) * (left_forward ? 1 : -1));
+    _right_motor.setPower(static_cast<int16_t>(right_power) * (right_forward ? 1 : -1));
   }
 
   // ────────────────────────────────────────────────
@@ -392,7 +430,7 @@ public:
     if (!_initialized || _get_power_source == nullptr || _get_direction_source == nullptr)
       return;
 
-    int16_t power = _apply_deadzone_to_source(_get_power_source());
+    SignedPWM power = _apply_deadzone_to_source(_get_power_source());
 
     // ──────────────── EXHIBITION MODE (IMMEDIATE) ────────────────
     if (_exposition_active_now)
@@ -407,12 +445,11 @@ public:
       }
       else
       {
+        if (!_driver_enabled)
+          setDriverEnabled(true);
+
         _left_motor.setPower(power);
         _right_motor.setPower(-power);
-        if (!_driver_enabled)
-        {
-          setDriverEnabled(true);
-        }
       }
       return;
     }
@@ -428,12 +465,11 @@ public:
       }
       else
       {
+        if (!_driver_enabled)
+          setDriverEnabled(true);
+
         _left_motor.setPower(_exposition_hold_power);
         _right_motor.setPower(-_exposition_hold_power);
-        if (!_driver_enabled)
-        {
-          setDriverEnabled(true);
-        }
       }
       return;
     }
@@ -445,29 +481,28 @@ public:
       setDriverEnabled(false);
       return;
     }
-    else if (!_driver_enabled)
-    {
+
+    if (!_driver_enabled)
       setDriverEnabled(true);
-    }
 
     float direction = (float)(_apply_deadzone_to_source(_get_direction_source())) / 255.0f;
-    int16_t powers[2] = {power, power};
+    SignedPWM powers[2] = {power, power};
 
     bool tank_mode = _use_tank_drive || _tank_drive_mode;
 
     if (direction > 0.0f)
     {
       if (tank_mode)
-        powers[1] = -(int16_t)(powers[1] * direction);
+        powers[1] = -(SignedPWM)(powers[1] * direction);
       else
-        powers[1] = (int16_t)(powers[1] * (1.0f - direction));
+        powers[1] = (SignedPWM)(powers[1] * (1.0f - direction));
     }
     else if (direction < 0.0f)
     {
       if (tank_mode)
-        powers[0] = -(int16_t)(powers[0] * -direction);
+        powers[0] = -(SignedPWM)(powers[0] * -direction);
       else
-        powers[0] = (int16_t)(powers[0] * (1.0f + direction));
+        powers[0] = (SignedPWM)(powers[0] * (1.0f + direction));
     }
 
     _left_motor.setPower(powers[0]);
@@ -477,5 +512,3 @@ public:
       _use_tank_drive = false;
   }
 };
-
-#endif
