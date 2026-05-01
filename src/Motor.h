@@ -111,7 +111,7 @@ private:
 
 public:
   /** Special marker indicating that a pin is not assigned. */
-  static const Pin PIN_UNUSED = 255;
+  static constexpr Pin PIN_UNUSED = 255;
 
   /**
    * @brief Initializes the pins and internal state. Must be called before use.
