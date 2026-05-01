@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## V2.1.1
+
+### `MotorDriveUnit` — Internal Changes
+
+- `SourceFn` typedef moved from `types.h` into `MotorDriveUnit` class scope (public section).
+
+### `Motor` — Internal Changes
+
+- `PIN_UNUSED` changed from `static const Pin` to `static constexpr Pin`.
+
 ---
 
 ## V2.1.0
