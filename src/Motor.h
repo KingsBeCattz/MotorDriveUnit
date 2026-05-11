@@ -107,7 +107,7 @@ private:
       _set_enable(enable_power);
 
     _pwm_value = enable_power;
-    _forward = (forward_power >= backward_power);
+    _forward = (forward_power - backward_power >= 0);
   }
 
 public:
