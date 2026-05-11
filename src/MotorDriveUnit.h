@@ -279,10 +279,16 @@ public:
   }
 
   /** @return The currently assigned power source function, or nullptr if none. */
-  SourceFn getPowerSourceFunction() { return _get_power_source; }
+  SourceFn getPowerSourceFunction() const { return _get_power_source; }
 
   /** @return The currently assigned direction source function, or nullptr if none. */
-  SourceFn getDirectionSourceFunction() { return _get_direction_source; }
+  SourceFn getDirectionSourceFunction() const { return _get_direction_source; }
+
+  /**
+   * @brief Gets the current driver-enable pin and mode configuration. true = digital, false = PWM.
+   * @return A pair (pin, digital_mode).
+   */
+  std::pair<Pin, bool> getDriverEnablePin() const { return {_driver_enable_pin, _digital_driver_enable}; }
 
   // ────────────────────────────────────────────────
   // Mutators
