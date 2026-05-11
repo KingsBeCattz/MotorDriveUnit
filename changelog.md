@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## V2.2.1
+
+### `MotorDriveUnit` — Const Overloads
+
+- `getLeftMotor() const` — returns a `const Motor &` to the left motor.
+- `getRightMotor() const` — returns a `const Motor &` to the right motor.
+
+---
+
 ## V2.2.0
 
 ### `Motor` — New Getters
