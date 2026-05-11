@@ -1,6 +1,15 @@
 # MotorDriveUnit
 
-High-level Arduino library for controlling single and dual DC motors using digital or PWM pins. Designed for robotics projects on ESP32, Arduino Uno, Mega, and similar boards. Version **2.2.0** adds read-only getter methods to both `Motor` and `MotorDriveUnit` for runtime state inspection.
+High-level Arduino library for controlling single and dual DC motors using digital or PWM pins. Designed for robotics projects on ESP32, Arduino Uno, Mega, and similar boards. Version **2.2.1** adds const overloads for the motor accessor methods in `MotorDriveUnit`.
+
+---
+
+# 🚀 What's New in V2.2.1
+
+### ✔ `MotorDriveUnit` — Const Overloads
+
+- `getLeftMotor() const` — returns a `const Motor &` to the left motor.
+- `getRightMotor() const` — returns a `const Motor &` to the right motor.
 
 ---
 
@@ -158,6 +167,8 @@ mdu.begin();
 * `getPowerSourceFunction() const` — assigned power source, or `nullptr`.
 * `getDirectionSourceFunction() const` — assigned direction source, or `nullptr`.
 * `getDriverEnablePin() const` — returns `std::pair<Pin, bool>` of `(driver_enable_pin, digital_mode)`.
+* `getLeftMotor() const` — returns a `const Motor &` to the left motor.
+* `getRightMotor() const` — returns a `const Motor &` to the right motor.
 
 ---
 
@@ -241,6 +252,10 @@ void loop() {
 ---
 
 # ⚠ Breaking Changes
+
+## From 2.2.0 → 2.2.1
+
+No breaking changes. Adds const overloads for `getLeftMotor()` and `getRightMotor()`.
 
 ## From 2.1.x → 2.2.0
 

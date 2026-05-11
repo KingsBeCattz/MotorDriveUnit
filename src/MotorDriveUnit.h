@@ -272,6 +272,26 @@ public:
    */
   inline Motor &getRightMotor() { return _right_motor; }
 
+  /**
+   * @brief Returns a const reference to the left motor.
+   *
+   * The reference is only valid while the owning MotorDriveUnit remains alive —
+   * do not store it beyond the lifetime of this object.
+   *
+   * @return const Motor& Const reference to the left motor.
+   */
+  inline const Motor &getLeftMotor() const { return _left_motor; }
+
+  /**
+   * @brief Returns a const reference to the right motor.
+   *
+   * The reference is only valid while the owning MotorDriveUnit remains alive —
+   * do not store it beyond the lifetime of this object.
+   *
+   * @return const Motor& Const reference to the right motor.
+   */
+  inline const Motor &getRightMotor() const { return _right_motor; }
+
   /** @return Current deadzone threshold. */
   inline UnsignedPWM getDeadzone() const
   {
