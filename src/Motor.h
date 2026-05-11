@@ -212,9 +212,9 @@ public:
     }
 
     if (is_forward)
-      _apply_power(clamped_power, 0);
+      forward(clamped_power);
     else
-      _apply_power(0, clamped_power);
+      backward(clamped_power);
   }
 
   /**
@@ -223,7 +223,7 @@ public:
    */
   void forward(UnsignedPWM power)
   {
-    _apply_power(utils::unsigned_pwm_clamp(power), 0);
+    _apply_power(power, 0);
   }
 
   /**
@@ -232,7 +232,7 @@ public:
    */
   void backward(UnsignedPWM power)
   {
-    _apply_power(0, utils::unsigned_pwm_clamp(power));
+    _apply_power(0, power);
   }
 
   /**
