@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## V2.2.0
+
+### `Motor` — New Getters
+
+- `getCurrentPower() const` — returns the last applied PWM value as `UnsignedPWM`.
+- `isForward() const` — returns `true` if the motor is currently spinning forward.
+- `isDirectionDigital() const` — returns whether direction pins are configured as digital.
+- `getDirectionPins() const` — returns a `std::pair<Pin, Pin>` of `(forward_pin, backward_pin)`.
+- `getEnablePin() const` — returns a `std::pair<Pin, bool>` of `(enable_pin, digital_mode)`.
+
+### `MotorDriveUnit` — New Getters
+
+- `getPowerSourceFunction() const` — returns the currently assigned power source function, or `nullptr` if none.
+- `getDirectionSourceFunction() const` — returns the currently assigned direction source function, or `nullptr` if none.
+- `getDriverEnablePin() const` — returns a `std::pair<Pin, bool>` of `(driver_enable_pin, digital_mode)`.
+
+---
+
 ## V2.1.1
 
 ### `MotorDriveUnit` — Internal Changes
