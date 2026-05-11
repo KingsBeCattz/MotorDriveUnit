@@ -1,6 +1,16 @@
 # MotorDriveUnit
 
-High-level Arduino library for controlling single and dual DC motors using digital or PWM pins. Designed for robotics projects on ESP32, Arduino Uno, Mega, and similar boards. Version **2.2.1** adds const overloads for the motor accessor methods in `MotorDriveUnit`.
+High-level Arduino library for controlling single and dual DC motors using digital or PWM pins. Designed for robotics projects on ESP32, Arduino Uno, Mega, and similar boards. Version **2.2.2** fixes direction flag logic and method delegation in `Motor`.
+
+---
+
+# 🚀 What's New in V2.2.2
+
+### ✔ `Motor` — Bug Fixes
+
+- `_forward` direction flag: `(forward_power >= backward_power)` incorrectly evaluated to `true` when both powers were equal (motor stopped). Fixed to `(forward_power - backward_power >= 0)`.
+- `setPower` now delegates to `forward()` and `backward()` instead of calling `_apply_power()` directly.
+- `forward()` and `backward()` no longer apply redundant clamping — `setPower` already delivers a clamped value before delegating.
 
 ---
 
@@ -252,6 +262,10 @@ void loop() {
 ---
 
 # ⚠ Breaking Changes
+
+## From 2.2.1 → 2.2.2
+
+No breaking changes. Bug fixes only.
 
 ## From 2.2.0 → 2.2.1
 
