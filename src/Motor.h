@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <utility>
 #include "Utils.h"
 #include "types.h"
 
@@ -262,8 +263,51 @@ public:
   /**
    * @brief Retrieves current dead zone threshold.
    */
-  UnsignedPWM getDigitalPinDeadZone(void)
+  UnsignedPWM getDigitalPinDeadZone(void) const
   {
     return _digital_pin_dead_zone;
+  }
+
+  /**
+   * @brief Gets the last applied PWM value (0–255).
+   */
+  UnsignedPWM getCurrentPower(void) const
+  {
+    return _pwm_value;
+  }
+
+  /**
+   * @brief Gets the current rotation direction.
+   * @return true if forward, false if backward.
+   */
+  bool isForward(void) const
+  {
+    return _forward;
+  }
+
+  /**
+   * @brief Gets the current forward and backward pin assignments.
+   * @return A pair of pins (forward_pin, backward_pin).
+   */
+  std::pair<Pin, Pin> getDirectionPins(void) const
+  {
+    return {_forward_pin, _backward_pin};
+  }
+
+  /**
+   * @brief Gets whether the direction pins are configured as digital.
+   */
+  bool isDirectionDigital(void) const
+  {
+    return _digital_direction;
+  }
+
+  /**
+   * @brief Gets the current enable pin assignment and mode.
+   * @return A pair (enable_pin, digital_mode).
+   */
+  std::pair<Pin, bool> getEnablePin(void) const
+  {
+    return {_enable_pin, _digital_enable};
   }
 };

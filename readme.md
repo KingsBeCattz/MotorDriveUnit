@@ -1,6 +1,24 @@
 # MotorDriveUnit
 
-High-level Arduino library for controlling single and dual DC motors using digital or PWM pins. Designed for robotics projects on ESP32, Arduino Uno, Mega, and similar boards. Version **2.1.0** introduces a typed PWM system for safer and more expressive motor control.
+High-level Arduino library for controlling single and dual DC motors using digital or PWM pins. Designed for robotics projects on ESP32, Arduino Uno, Mega, and similar boards. Version **2.2.0** adds read-only getter methods to both `Motor` and `MotorDriveUnit` for runtime state inspection.
+
+---
+
+# 🚀 What's New in V2.2.0
+
+### ✔ `Motor` — New Getters
+
+- `getCurrentPower() const` — returns the last applied PWM value as `UnsignedPWM`.
+- `isForward() const` — returns `true` if the motor is currently spinning forward.
+- `isDirectionDigital() const` — returns whether direction pins are configured as digital.
+- `getDirectionPins() const` — returns a `std::pair<Pin, Pin>` of `(forward_pin, backward_pin)`.
+- `getEnablePin() const` — returns a `std::pair<Pin, bool>` of `(enable_pin, digital_mode)`.
+
+### ✔ `MotorDriveUnit` — New Getters
+
+- `getPowerSourceFunction() const` — returns the currently assigned power source function, or `nullptr` if none.
+- `getDirectionSourceFunction() const` — returns the currently assigned direction source function, or `nullptr` if none.
+- `getDriverEnablePin() const` — returns a `std::pair<Pin, bool>` of `(driver_enable_pin, digital_mode)`.
 
 ---
 
@@ -79,6 +97,11 @@ motor.setEnablePin(enable_pin, /*digital?*/ true_or_false);
 * `backward(UnsignedPWM power)`
 * `stop()`
 * `setDigitalPinDeadZone(UnsignedPWM value)`
+* `getCurrentPower() const` — last applied PWM value.
+* `isForward() const` — current rotation direction.
+* `isDirectionDigital() const` — direction pin mode.
+* `getDirectionPins() const` — returns `std::pair<Pin, Pin>` of `(forward_pin, backward_pin)`.
+* `getEnablePin() const` — returns `std::pair<Pin, bool>` of `(enable_pin, digital_mode)`.
 
 ### Behavior Notes
 
@@ -131,6 +154,10 @@ mdu.begin();
 * `toggleTankDriveMode()`
 * `useTankDrive()` — one-cycle only
 * `useManualDrive(UnsignedPWM, bool, UnsignedPWM, bool)`
+* `getDeadzone() const` — current deadzone threshold.
+* `getPowerSourceFunction() const` — assigned power source, or `nullptr`.
+* `getDirectionSourceFunction() const` — assigned direction source, or `nullptr`.
+* `getDriverEnablePin() const` — returns `std::pair<Pin, bool>` of `(driver_enable_pin, digital_mode)`.
 
 ---
 
@@ -214,6 +241,10 @@ void loop() {
 ---
 
 # ⚠ Breaking Changes
+
+## From 2.1.x → 2.2.0
+
+No breaking changes. All additions are backwards-compatible getters.
 
 ## From 2.0.0 → 2.1.0
 
