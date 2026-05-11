@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## V2.2.2
+
+### `Motor` — Bug Fixes
+
+#### `_forward` direction flag
+
+- `_forward = (forward_power >= backward_power)` was incorrect: evaluated to `true` when both powers were equal (motor stopped), assigning an arbitrary direction at rest.
+- Fixed to `_forward = (forward_power - backward_power >= 0)`, which correctly evaluates net direction without false positives on stop.
+
+#### `setPower` — delegate to `forward`/`backward`
+
+- `setPower` was calling `_apply_power(clamped_power, 0)` and `_apply_power(0, clamped_power)` directly instead of delegating to `forward()` and `backward()`.
+- Fixed to use `forward(clamped_power)` and `backward(clamped_power)` respectively, respecting the semantic contract of each method.
+
+#### `forward` / `backward` — redundant clamping removed
+
+- `forward()` and `backward()` were applying `utils::unsigned_pwm_clamp()` internally before passing the value to `_apply_power()`.
+- Since `setPower` already delivers a clamped value before delegating, the clamping inside `forward()` and `backward()` was redundant. Removed; both methods now pass the value directly to `_apply_power()`.
+
+---
+
 ## V2.2.1
 
 ### `MotorDriveUnit` — Const Overloads
